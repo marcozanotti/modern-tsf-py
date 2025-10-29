@@ -1,0 +1,43 @@
+---
+title: "Challenge 1 - Feature Engineering"
+author: "Marco Zanotti"
+date: ""
+output: 
+  rmdformats::downcute:
+    highlight: tango
+    toc_depth: 2
+---
+
+## Content
+
+This challenge is all about explorative data analysis (EDA) and
+features engineering in time series (Module 1 Lectures 1.1 and 1.2).  
+
+The purpose of this challenge is to test your ability to effectively understand 
+the dynamics of different time series allowing you to create one or more 
+features' recipe.  
+
+The analysis you perform at this first stage will be the basis to perform accurate
+forecasts during the next challenges.  
+
+
+
+## Requirements
+
+You are required to produce a fully reproducible notebook report explaining 
+all the steps that takes you towards the creation of all the new features 
+you would like to use in forecasting models.  
+
+At least one feature set for each time series has to be produced.  
+
+
+
+## Data
+
+Challenge dataset contains an hourly time series of the M4 competition.
+
+```{r data, echo=FALSE}
+readr::read_csv("../data/challenges/challenge1.csv", show_col_types = FALSE) |> 
+  timetk::plot_time_series(ds, y, .smooth = FALSE)
+```
+

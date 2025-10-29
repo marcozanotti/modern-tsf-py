@@ -1,0 +1,121 @@
+---
+title: "Modern Time Series Forecasting with R"
+subtitle: ""
+author: "Marco Zanotti"
+institute: ""
+date: ""
+output:
+  xaringan::moon_reader:
+    css: ["default", "css/custom.css"]
+    lib_dir: libs
+    nature:
+      highlightStyle: github
+      highlightLines: true
+      countIncrementalSlides: false
+    seal: false
+---
+
+class: inverse, center, middle 
+background-color: black
+
+# Modern Time Series Forecasting with R
+
+### Marco Zanotti
+
+---
+class: separator, right, middle
+background-color: black
+
+# Modeltime
+<!-- Separator -->
+
+---
+class: inverse, center, middle 
+background-image: url("imgs/mod1.png") 
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle 
+background-image: url("imgs/mod2.png") 
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle
+background-image: url("imgs/mod3.png")
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle 
+background-image: url("imgs/mod4.png") 
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle
+background-image: url("imgs/mod5.png")
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle 
+background-image: url("imgs/mod6.png") 
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle
+background-image: url("imgs/mod7.png")
+background-size: contain
+background-color: black
+
+---
+class: inverse, center, middle 
+background-image: url("imgs/mod8.png") 
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle
+background-image: url("imgs/mod9.png")
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle 
+background-image: url("imgs/mod10.png") 
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle
+background-image: url("imgs/mod11.png")
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle 
+background-image: url("imgs/mod12.png") 
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle
+background-image: url("imgs/mod13.png")
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle 
+background-image: url("imgs/mod14.png") 
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle 
+background-color: black
+
+# Thank you!
+<!-- Separator -->

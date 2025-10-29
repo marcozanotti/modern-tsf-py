@@ -1,0 +1,85 @@
+---
+title: "Modern Time Series Forecasting with Python"
+subtitle: ""
+author: "Marco Zanotti"
+institute: ""
+date: ""
+output:
+  xaringan::moon_reader:
+    css: ["default", "css/custom.css"]
+    lib_dir: libs
+    nature:
+      highlightStyle: github
+      highlightLines: true
+      countIncrementalSlides: false
+    seal: false
+---
+
+class: inverse, center, middle 
+background-color: black
+
+# Modern Time Series Forecasting with Python
+
+### Marco Zanotti
+
+---
+class: separator, right, middle
+background-color: black
+
+# Nixtla
+<!-- Separator -->
+
+---
+class: inverse, center, middle 
+background-image: url("imgs/mod1.png") 
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle 
+background-image: url("imgs/nixtla1.png") 
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle
+background-image: url("imgs/nixtla2.png")
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle
+background-image: url("imgs/nixtla3.png")
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle
+background-image: url("imgs/nixtla4.png")
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle
+background-image: url("imgs/nixtla5.png")
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle
+background-image: url("imgs/nixtla6.png")
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle
+background-image: url("imgs/nixtla7.png")
+background-size: contain 
+background-color: black
+
+---
+class: inverse, center, middle 
+background-color: black
+
+# Thank you!
+<!-- Separator -->

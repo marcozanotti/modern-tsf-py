@@ -1,0 +1,36 @@
+---
+title: "Challenge 2 - Modeltime"
+author: "Marco Zanotti"
+date: ""
+output:
+  rmdformats::downcute:
+    highlight: tango
+    toc_depth: 2
+---
+
+## Content
+
+This challenge is about the use of Nixtla Python framework (Module 1, Lecture 1.3).  
+
+The purpose of this challenge is to apply the Nixtla workflow to one or
+more time series of the challenge.   
+
+
+
+## Requirements
+
+You are required to produce a fully reproducible notebook report explaining 
+all the steps to forecast with Holt Winters, and Random Forest algorithms.  
+
+You are free to apply the feature sets you created during Challenge 1.  
+
+
+
+## Data
+
+Challenge dataset contains an hourly time series of the M4 competition.
+
+```{r data, echo=FALSE}
+readr::read_csv("../data/challenges/challenge1.csv", show_col_types = FALSE) |> 
+  timetk::plot_time_series(ds, y, .smooth = FALSE)
+```

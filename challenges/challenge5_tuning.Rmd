@@ -1,0 +1,37 @@
+---
+title: "Challenge 5 - Hyperparameter Tuning"
+author: "Marco Zanotti"
+date: ""
+output: 
+  rmdformats::downcute:
+    highlight: tango
+    toc_depth: 2
+---
+
+## Content
+
+This challenge is about hyperparameter tuning (Module 2 Lecture 2.3).  
+
+The purpose of this challenge is to test your ability to optimize sequential and
+non-sequential models for time series forecasting.  
+
+
+
+## Requirements
+
+You are required to produce a fully reproducible notebook report explaining 
+all the steps that takes you towards the optimization of a sequential model and
+a non-sequential model.  
+
+You are free to apply the feature sets you created during Challenge 1.   
+
+
+
+## Data
+
+Challenge dataset contains an hourly time series of the M4 competition.
+
+```{r data, echo=FALSE}
+readr::read_csv("../data/challenges/challenge1.csv", show_col_types = FALSE) |> 
+  timetk::plot_time_series(ds, y, .smooth = FALSE)
+```
