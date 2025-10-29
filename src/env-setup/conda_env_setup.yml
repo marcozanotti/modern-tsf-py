@@ -4,11 +4,11 @@
 #
 #    conda env create -f src/env-setup/conda_env_setup.yml
 #    conda env update --file src/env-setup/conda_env_setup.yml --prune
-#    conda env export --name global_retrain > envname.yml
-#    conda env remove --name global_retrain
+#    conda env export --name modern_tsf > envname.yml
+#    conda env remove --name modern_tsf
 #    conda env list
 
-name: global_retrain
+name: modern_tsf
 channels:
   - conda-forge
   - defaults
@@ -23,42 +23,31 @@ dependencies:
       - pandas >= 2.2.0, < 3.0.0
       - pyarrow
       - polars >= 1.6.0, < 2.0.0
-      # - openpyxl >= 3.0.0, < 4.0.0
 
       # Visualization
       - matplotlib >= 3.7.0, < 4.0.0
       - plotly >= 5.0.0, < 6.0.0
-      - plotnine < 1.0.0
-
-      # Explorative Data Analysis
-      # - pyjanitor
 
       # Statistics
       # - scipy >= 1.14.0, < 2.0.0
 
       # Time Series
       - pytimetk >= 1.0.0, < 2.0.0
-      # - prophet >= 1.1.0, < 2.0.0
-      # - tsfresh
-      # - pmdarima
+      - prophet >= 1.1.0, < 2.0.0
       
       # Machine Learning
-      # - statsmodels >= 0.10.0, < 1.0.0
       - scikit-learn >= 1.5.0, < 2.0.0
       - xgboost >= 2.1.0, < 3.0.0
       - lightgbm >= 4.5.0, < 5.0.0
       - catboost >= 1.2.0, < 2.0.0
 
       # H2O - AutoML
-      # - requests
-      # - tabulate
-      # - future
-      # - h2o
+      - h2o
 
       # Optimization
       # - hyperopt >= 0.2.0, < 1.0.0
       # - ray >= 2.30.0, < 3.0.0
-      # - optuna >= 4.0.0, < 5.0.0
+      - optuna >= 4.0.0, < 5.0.0
 
       # Nixtla-verse
       - datasetsforecast
@@ -67,16 +56,6 @@ dependencies:
       - statsforecast >= 1.7.7, < 2.0.0
       - mlforecast >= 0.13.1, < 1.0.0
       - neuralforecast >= 1.7.2, < 2.0.0
-
-      # Sktime-verse
-      # - sktime
-
-      # Notebooks
-      - ipykernel
-      - jupyterlab
-      - jupyterlab-server
-      - ipywidgets
-      - ipympl
-      - jupytext
+      - timegpt
 
 
