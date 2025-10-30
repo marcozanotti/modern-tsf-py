@@ -1,4 +1,4 @@
-
+import os
 import re
 import pandas as pd
 import numpy as np
@@ -12,6 +12,43 @@ from utilsforecast.evaluation import evaluate
 from utilsforecast.losses import bias, mae, mape, mse, rmse
 from utilsforecast.plotting import plot_series
 
+
+
+# function to load data
+def load_data(file_path, file_name, ext = '.parquet'):
+
+    full_path = f'{file_path}{file_name}{ext}'
+
+    if ext == '.parquet':
+        res_df = pd.read_parquet(full_path)
+    elif ext == '.csv':
+        res_df = pd.read_csv(full_path)
+    else:
+        raise(f'Unsupported file extension {ext}. Only .parquet and .csv are allowed')
+
+    if 'ds' in res_df.columns:
+        ds = pd.to_datetime(res_df['ds'], errors='coerce')
+        if getattr(ds.dt, 'tz', None) is not None:
+            ds = ds.dt.tz_convert('UTC').dt.tz_localize(None)
+        res_df['ds'] = ds.astype('datetime64[ns]')
+
+    return res_df
+
+# function to save data
+@pf.register_dataframe_method
+def save_data(data, file_path, file_name, ext = '.parquet'):
+    
+    if not os.path.exists(file_path):
+        os.makedirs(file_path)
+
+    full_path = f'{file_path}{file_name}{ext}'
+
+    if ext == '.parquet':
+        data.to_parquet(full_path)
+    elif ext == '.csv':
+        data.to_csv(full_path)
+    else:
+        raise(f'Unsupported file extension {ext}. Only .parquet and .csv are allowed')
 
 # function to perform data standardization (mean 0, stdev 1)
 def standardize(x):
