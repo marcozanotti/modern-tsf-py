@@ -7,6 +7,8 @@
 #    conda env export --name modern_tsf > envname.yml
 #    conda env remove --name modern_tsf
 #    conda env list
+#    conda source activate modern_tsf
+#    pip freeze > ./src/env-setup/requirements.txt
 
 name: modern_tsf
 channels:
@@ -19,43 +21,44 @@ dependencies:
   - pip:
 
       # Core Data
-      - numpy >= 1.24.0, < 2.0.0
+      - numpy >= 2.0.0, < 3.0.0
       - pandas >= 2.2.0, < 3.0.0
       - pyarrow
       - polars >= 1.6.0, < 2.0.0
 
       # Visualization
       - matplotlib >= 3.7.0, < 4.0.0
-      - plotly >= 5.0.0, < 6.0.0
+      - plotly >= 6.0.0, < 7.0.0
 
       # Statistics
       # - scipy >= 1.14.0, < 2.0.0
 
       # Time Series
-      - pytimetk >= 1.0.0, < 2.0.0
-      - prophet >= 1.1.0, < 2.0.0
+      - pytimetk >= 2.0.0, < 3.0.0
+      # - prophet >= 1.1.0, < 2.0.0
       
       # Machine Learning
       - scikit-learn >= 1.5.0, < 2.0.0
-      - xgboost >= 2.1.0, < 3.0.0
-      - lightgbm >= 4.5.0, < 5.0.0
-      - catboost >= 1.2.0, < 2.0.0
+      # - xgboost >= 2.1.0, < 3.0.0
+      # - lightgbm >= 4.5.0, < 5.0.0
+      # - catboost >= 1.2.0, < 2.0.0
 
       # H2O - AutoML
-      - h2o
+      # - h2o
 
       # Optimization
       # - hyperopt >= 0.2.0, < 1.0.0
       # - ray >= 2.30.0, < 3.0.0
-      - optuna >= 4.0.0, < 5.0.0
+      # - optuna >= 4.0.0, < 5.0.0
 
       # Nixtla-verse
       - datasetsforecast
-      - coreforecast >= 0.0.12, < 1.0.0
-      - utilsforecast >= 0.2.0, < 1.0.0
-      - statsforecast >= 1.7.7, < 2.0.0
-      - mlforecast >= 0.13.1, < 1.0.0
-      - neuralforecast >= 1.7.2, < 2.0.0
-      - timegpt
+      - coreforecast
+      - utilsforecast
+      - statsforecast >= 2.0.0, < 3.0.0
+      - mlforecast >= 1.0.0, < 2.0.0
+      - neuralforecast >= 3.0.0, < 4.0.0
+      - hierarchicalforecast >= 1.0.0, < 2.0.0
+      - nixtla
 
 
