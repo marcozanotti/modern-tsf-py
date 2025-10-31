@@ -1,10 +1,14 @@
 import os
 import re
 import pandas as pd
+import polars as pl
 import numpy as np
 import pandas_flavor as pf
 import random
-from statsmodels.gam.api import BSplines
+import matplotlib.pyplot as plt
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from statsmodels.tsa.seasonal import seasonal_decompose
+
 from statsforecast import StatsForecast
 from mlforecast import MLForecast
 from sklearn.linear_model import LinearRegression
@@ -13,24 +17,17 @@ from utilsforecast.losses import bias, mae, mape, mse, rmse
 from utilsforecast.plotting import plot_series
 
 
-
 # function to load data
 def load_data(file_path, file_name, ext = '.parquet'):
 
     full_path = f'{file_path}{file_name}{ext}'
 
     if ext == '.parquet':
-        res_df = pd.read_parquet(full_path)
+        res_df = pl.read_parquet(full_path)
     elif ext == '.csv':
-        res_df = pd.read_csv(full_path)
+        res_df = pl.read_csv(full_path)
     else:
         raise(f'Unsupported file extension {ext}. Only .parquet and .csv are allowed')
-
-    if 'ds' in res_df.columns:
-        ds = pd.to_datetime(res_df['ds'], errors='coerce')
-        if getattr(ds.dt, 'tz', None) is not None:
-            ds = ds.dt.tz_convert('UTC').dt.tz_localize(None)
-        res_df['ds'] = ds.astype('datetime64[ns]')
 
     return res_df
 
@@ -73,35 +70,55 @@ def log_interval(x, lb = 0, ub = 'auto', offset = 1):
 def inv_log_interval(x, lb, ub, offset = 1):
     return (ub - lb) * (np.exp(x)) / (1 + np.exp(x)) + lb - offset
 
-# function to add basis splines to the dataframe
-@pf.register_dataframe_method
-def augment_bsplines(data, column_name = 'ds_index_num', df = 5, degree = 3):
-    
-    bs = BSplines(
-        data[column_name], 
-        df = df, 
-        degree = degree, 
-        include_intercept = False
-    )
-    bs_df = pd.DataFrame(bs.basis)
-    
-    col_names = []
-    for i in range(1, (len(bs_df.columns) + 1)):
-        col_names.append(f'bspline_{i}_degree_{degree}')
-    bs_df.columns = col_names
-    bs_df.index = data.index
+# function to plot ACF and PACF
+@pl.api.register_dataframe_namespace("plot_acf_pacf")
+def plot_acf_pacf(df, column, lags):
 
-    data_splines = pd.concat([data, bs_df], axis = 1)
+    x = None
+    try:
+        if isinstance(df, pl.DataFrame):
+            x = df.get_column(column).to_numpy()
+        elif isinstance(df, pl.Series):
+            x = df.to_numpy()
+    except Exception:
+        pass
 
-    return data_splines
+    if x is None:
+        # pandas or array-like
+        if hasattr(df, "columns") and column in getattr(df, "columns", []):
+            x = df[column].to_numpy()
+        else:
+            x = np.asarray(df)
+
+    x = np.asarray(x, dtype=float)
+    x = x[~np.isnan(x)]
+
+    fig, axes = plt.subplots(2, 1, sharex=True, figsize=(9, 6))
+    plot_acf(x, lags=lags, ax=axes[0])
+    axes[0].set_title(f"ACF: {column}")
+    plot_pacf(x, lags=lags, ax=axes[1], method="ywm")
+    axes[1].set_title(f"PACF: {column}")
+    fig.tight_layout()
+    return fig
+
+# function to perform seasonal decomposition and plotting
+def plot_seasonal_decompose(df, column, model='add', period=None):
+    
+    pdf = df.select(['ds', column]).to_pandas()
+    pdf['ds'] = pd.to_datetime(pdf['ds'])
+    s = pdf.sort_values('ds').set_index('ds')[column]
+
+    res = seasonal_decompose(s, model=model, period=period)
+    fig = res.plot()
+    return fig
 
 # function to perform time series regression and plotting
 @pf.register_dataframe_method
-def plot_time_series_regression(data):
+def plot_time_series_regression(df):
     
     # fit linear regression
     fcst = MLForecast(models = LinearRegression(), freq = 'D')
-    fcst.fit(data, static_features = [], fitted = True)
+    fcst.fit(df, static_features = [], fitted = True)
 
     # extract fitted values
     data_fitted_values = fcst.forecast_fitted_values()

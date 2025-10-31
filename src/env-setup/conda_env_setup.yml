@@ -31,9 +31,10 @@ dependencies:
       - plotly >= 6.0.0, < 7.0.0
 
       # Statistics
-      # - scipy >= 1.14.0, < 2.0.0
+      - scipy >= 1.15.0, < 2.0.0
 
       # Time Series
+      - statsmodels < 1.0.0
       - pytimetk >= 2.0.0, < 3.0.0
       # - prophet >= 1.1.0, < 2.0.0
       
