@@ -249,8 +249,13 @@ email_df \
 
 email_log_df \
     .tk.augment_ewm(
-        date_column = 'ds', value_column = 'y',
-        window_func = 'mean', alpha = 0.1
+        date_column = 'ds', value_column = 'y', window_func = 'mean', alpha = 0.1
+    ) \
+    .tk.augment_ewm(
+        date_column = 'ds', value_column = 'y', window_func = 'mean', alpha = 0.25
+    ) \
+    .tk.augment_ewm(
+        date_column = 'ds', value_column = 'y', window_func = 'mean', alpha = 0.5
     ) \
     .melt(id_vars = 'ds', value_name = 'value') \
     .tk.plot_timeseries(
@@ -408,9 +413,9 @@ email_log_df.tk.plot_timeseries('ds', 'y', smooth = False)
 
 # * Autocorrelation Function (ACF) Plot -----------------------------------
 
-plot_acf_pacf(email_log_df, 'y', lags = 10)
+email_log_df.pipe(plot_acf_pacf, column = 'y', lags = 14)
 
-plot_acf_pacf(email_log_df, 'y', lags = 120)
+email_log_df.pipe(plot_acf_pacf, column = 'y', lags = 120)
 
 
 # * Cross-Correlation Function (CCF) Plot ---------------------------------

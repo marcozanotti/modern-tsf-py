@@ -48,30 +48,27 @@ def save_data(data, file_path, file_name, ext = '.parquet'):
         raise(f'Unsupported file extension {ext}. Only .parquet and .csv are allowed')
 
 # function to perform data standardization (mean 0, stdev 1)
-def standardize(x):
-    print(f'mean x = {np.mean(x)}, stdev x = {np.std(x)}')
-    return (x - np.mean(x)) / np.std(x)
+def standardize(col = 'y', mean = 0, stdev = 1):
+    return (pl.col(col) - mean) / stdev
 
 # function to invert standardization
-def inv_standardize(x, mean, stdev):
-    return (x * stdev) + mean
+def inv_standardize(col = 'y', mean = 0, stdev = 1):
+    return (pl.col(col) * stdev) + mean
 
-# function to perform data log-interval transformation
+# function to perform data log-interval transformation (Pandas)
 # log(((x + offset) - a)/(b - (x + offset)))
 # a = lower bound, b = upper bound
-def log_interval(x, lb = 0, ub = 'auto', offset = 1):
+def log_interval(col = 'y', lb = 0, ub = 'auto', offset = 1):
     if (ub == 'auto'):
-        ub = np.max(x) * 1.10 
-    print(f'lower bound = {lb}, upper bound = {ub}, offset = {offset}')
-    return np.log(((x + offset) - lb)/(ub - (x + offset)))
+        ub = pl.col(col).max() * 1.10 
+    return ((pl.col(col) + offset - lb) / (ub - (pl.col(col) + offset))).log()
 
 # function to invert log-interval transformation
 # (b-a)*(exp(x)) / (1 + exp(x)) + a - offset
-def inv_log_interval(x, lb, ub, offset = 1):
-    return (ub - lb) * (np.exp(x)) / (1 + np.exp(x)) + lb - offset
+def inv_log_interval(col = 'y', lb = 0, ub = None, offset = 1):
+    return (ub - lb) * (pl.col(col).exp()) / (1 + pl.col(col).exp()) + lb - offset
 
 # function to plot ACF and PACF
-@pl.api.register_dataframe_namespace("plot_acf_pacf")
 def plot_acf_pacf(df, column, lags):
 
     x = None
@@ -113,11 +110,10 @@ def plot_seasonal_decompose(df, column, model='add', period=None):
     return fig
 
 # function to perform time series regression and plotting
-@pf.register_dataframe_method
 def plot_time_series_regression(df):
     
     # fit linear regression
-    fcst = MLForecast(models = LinearRegression(), freq = 'D')
+    fcst = MLForecast(models = LinearRegression(), freq = '1d')
     fcst.fit(df, static_features = [], fitted = True)
 
     # extract fitted values
@@ -125,13 +121,11 @@ def plot_time_series_regression(df):
 
     # plot actual vs fitted
     p = data_fitted_values \
-        .rename(columns = {'y': 'actual', 'LinearRegression': 'fitted'}) \
+        .rename({'y': 'actual', 'LinearRegression': 'fitted'}) \
         .melt(id_vars = ['unique_id', 'ds']) \
-        .plot_timeseries(
-            date_column = 'ds', 
-            value_column = 'value',
-            color_column = 'variable',
-            smooth = False
+        .tk.plot_timeseries(
+            date_column = 'ds', value_column = 'value',
+            color_column = 'variable', smooth = False
         )
 
     return p
