@@ -481,3 +481,208 @@ preds_back_df = preds \
 
 plot_series(df = data_back_df, forecasts_df = preds_back_df, engine = 'plotly').show()
 
+
+
+# Nixtla's Features Engineering Utilities ---------------------------------
+
+
+# * Pre-processing Data ---------------------------------------------------
+
+email_df.tk.plot_timeseries('ds', 'y', smooth = False)
+
+# filter out the first part of the data with zeros
+data_prep_df = email_df \
+    .tk.filter_by_time(date_column = 'ds', start_date = '2018-07-03')
+
+y_lb = 0
+y_ub = data_prep_df['y'].max() * 1.10
+y_offset = 1
+
+data_prep_df = data_prep_df \
+    .with_columns(log_interval(lb = y_lb, ub = y_ub, offset = y_offset).alias('y'))
+
+y_mean = data_prep_df['y'].mean()
+y_std = data_prep_df['y'].std()
+
+data_prep_df = data_prep_df \
+    .with_columns(standardize(mean = y_mean, stdev = y_std).alias('y'))
+
+df_names = email_df.columns
+data_prep_df = data_prep_df \
+    .tk.anomalize(
+        date_column = 'ds', value_column = 'y', method = 'stl', 
+        iqr_alpha = 0.02, max_anomalies = 0.2, clean_alpha = 0.5, 
+        bind_data = True
+    ) \
+    .with_columns(
+        pl.when(pl.col('anomaly') == 'Yes')
+        .then(pl.col('observed_clean'))
+        .otherwise(pl.col('y'))
+        .alias('y')
+    ) \
+    .select(df_names) \
+    .drop('pageViews', 'organicSearches', 'sessions')
+
+data_prep_df.tk.plot_timeseries('ds', 'y', smooth = False)
+data_prep_df \
+    .drop('unique_id') \
+    .melt(id_vars = 'ds', value_name = 'value') \
+    .tk.plot_timeseries('ds', 'value', color_column = 'variable', smooth = False)
+
+
+# * Utilsforecast Engineering Pipeline ------------------------------------
+
+from functools import partial
+from utilsforecast.feature_engineering import (
+    fourier, trend, time_features, pipeline
+)
+
+# only trend, fourier, and time-based features
+# possibility to add custom feature functions
+
+# custom feature function
+def is_weekend(times):
+    dow = times.dt.weekday()
+    return dow >= 6
+
+horizon = 7 * 8 # 8 weeks
+
+features = [
+    trend,
+    partial(fourier, season_length = 7, k = 1),
+    partial(fourier, season_length = 14, k = 1),
+    partial(fourier, season_length = 30, k = 1),
+    partial(time_features, features = ['day', 'week', 'month', is_weekend]),
+]
+
+transformed_df, future_df = pipeline(
+    data_prep_df, features = features, freq = '1d', h = horizon,
+)
+
+transformed_df
+future_df
+
+transformed_df.pipe(plot_time_series_regression)
+
+
+# * MLForecast Engineering Preprocessor -----------------------------------
+
+import operator
+import numpy as np
+from sklearn.preprocessing import FunctionTransformer
+from mlforecast import MLForecast
+from mlforecast.lag_transforms import (
+    RollingMean, RollingStd, ExpandingMean, SeasonalRollingMean,
+    ExponentiallyWeightedMean, Combine, Offset
+)
+from mlforecast.target_transforms import (
+    LocalStandardScaler, GlobalSklearnTransformer
+)
+
+horizon = 7 * 8 # 8 weeks
+
+# custom feature function
+def is_weekend(times):
+    dow = times.dt.weekday()
+    return dow >= 6
+
+# custom target transformer
+sk_log1p = GlobalSklearnTransformer(FunctionTransformer(func = np.log1p, inverse_func = np.expm1))
+
+# filter out the first part of the data with zeros
+data_prep_df = email_df \
+    .tk.filter_by_time(date_column = 'ds', start_date = '2018-07-03') \
+    .drop('pageViews', 'organicSearches', 'sessions')
+
+# initialize MLForecast with the desired features and no models
+fcst = MLForecast(
+    models = [],
+    freq = '1d',
+    lags = [1, 7, 14, 30],
+    lag_transforms = {
+        1: [
+            ExpandingMean(), 
+            ExponentiallyWeightedMean(alpha = 0.3),
+            Combine(
+                RollingMean(window_size = 7),
+                Offset(RollingMean(window_size = 7), n = 1),
+                operator.truediv
+            )
+        ],
+        7: [RollingMean(window_size = 7, min_samples = 1), RollingStd(window_size = 7, min_samples = 1)],
+        30: [SeasonalRollingMean(season_length = 30, window_size = 3)],
+
+    },
+    date_features = ['day', 'weekday', 'week', 'month', 'quarter', is_weekend],
+    target_transforms = [sk_log1p, LocalStandardScaler()]
+)
+
+# You can compose the built-in transformations by using the Combine class, 
+# which takes two transformations and an operator. If you want one of the 
+# transformations in Combine to be applied to a different lag you can use 
+# the Offset class, which will apply the offset first and then the transformation.
+
+# You can apply target transformations to the target variable before fitting 
+# the model by specifying them in the target_transforms parameter.
+
+# call the preprocess method on the data to generate features
+data_prep_df = fcst.preprocess(data_prep_df, static_features = [], dropna = False)
+data_prep_df.glimpse()
+
+data_prep_df \
+    .melt(id_vars = ['unique_id', 'ds'], value_name = 'value') \
+    .tk.plot_timeseries('ds', 'value', color_column = 'variable', smooth = False)
+
+
+# * Sklearn Pipeline Integration ------------------------------------------
+
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.linear_model import LinearRegression
+
+# filter out the first part of the data with zeros
+# NOTE: we need to convert to pandas DataFrame for sklearn compatibility
+data_prep_df = email_df \
+    .tk.filter_by_time(date_column = 'ds', start_date = '2018-07-03') \
+    .drop('pageViews', 'organicSearches', 'sessions', 'promo') \
+    .to_pandas()
+
+# initialize MLForecast with the desired features and no models
+# use 'dayofweek' because pandas objects are used
+fcst = MLForecast(
+    models = [],
+    freq = '1d',
+    lags = [1],
+    date_features = ['dayofweek']
+)
+X, y = fcst.preprocess(data_prep_df, return_X_y = True)
+X
+
+# define a column transformer to one-hot-encode the 'dayofweek' feature
+ohe = ColumnTransformer(
+    transformers = [
+        ('encoder', OneHotEncoder(drop = 'first'), ['dayofweek'])
+    ],
+    remainder = 'passthrough',
+)
+X_transformed = ohe.fit_transform(X)
+X_transformed.shape
+ohe.get_feature_names_out()
+
+# define a pipeline with the column transformer and a linear regression model
+model = make_pipeline(ohe, LinearRegression())
+
+fcst = MLForecast(
+    models = {'ohe_lr': model},
+    freq = '1d',
+    lags = [1],
+    date_features = ['dayofweek']
+)
+fcst.fit(data_prep_df)
+
+pipe = fcst.models_['ohe_lr']
+pipe.named_steps['columntransformer'].get_feature_names_out()
+pipe.named_steps['linearregression'].coef_.ravel()
+
+fcst.predict(horizon)
