@@ -36,7 +36,7 @@ dependencies:
       # Time Series
       - statsmodels < 1.0.0
       - pytimetk >= 2.0.0, < 3.0.0
-      # - prophet >= 1.1.0, < 2.0.0
+      - prophet >= 1.0.0, < 2.0.0
       
       # Machine Learning
       - scikit-learn >= 1.5.0, < 2.0.0

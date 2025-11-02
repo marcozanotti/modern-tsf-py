@@ -3,7 +3,6 @@ import re
 import pandas as pd
 import polars as pl
 import numpy as np
-import pandas_flavor as pf
 import random
 import matplotlib.pyplot as plt
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
@@ -32,7 +31,6 @@ def load_data(file_path, file_name, ext = '.parquet'):
     return res_df
 
 # function to save data
-@pf.register_dataframe_method
 def save_data(data, file_path, file_name, ext = '.parquet'):
     
     if not os.path.exists(file_path):
@@ -99,7 +97,7 @@ def plot_acf_pacf(df, column, lags):
     return fig
 
 # function to perform seasonal decomposition and plotting
-def plot_seasonal_decompose(df, column, model='add', period=None):
+def plot_seasonal_decompose(df, column, model = 'add', period = None):
     
     pdf = df.select(['ds', column]).to_pandas()
     pdf['ds'] = pd.to_datetime(pdf['ds'])
@@ -131,59 +129,58 @@ def plot_time_series_regression(df):
     return p
 
 # function to plot the cross-validation plan
-@pf.register_dataframe_method
 def plot_cross_validation_plan(
-    data, freq, h, 
+    df, freq, h, 
     n_windows = 1, step_size = 1,
-    engine = 'matplotlib'
+    engine = 'plotly'
 ):
 
-    data = data[['unique_id', 'ds', 'y']]
+    df = df.select('unique_id', 'ds', 'y')
     sf = StatsForecast(models = [], freq = freq, n_jobs = -1)
     cv_df = sf.cross_validation(
-        df = data, h = h, n_windows = n_windows, step_size = step_size
+        df = df, h = h, n_windows = n_windows, step_size = step_size
     )
 
-    cv_df.rename(columns = {'y': 'cv_set'}, inplace = True)
+    cv_df = cv_df.rename({'y': 'cv_set'})
     cutoff = cv_df['cutoff'].unique()
 
     for k in range(len(cutoff)): 
-        cv = cv_df[cv_df['cutoff'] == cutoff[k]]
-        StatsForecast.plot(
-            data, cv.drop('cutoff', axis = 1), 
-            engine = engine
-        ).show()
+        cv = cv_df.filter(pl.col('cutoff') == cutoff[k]).drop('cutoff')
+        StatsForecast.plot(df, cv, engine = engine).show()
 
 # function to perform evaluation on test set
 def calibrate_evaluate_plot(
-    object, data, h, 
-    prediction_intervals = None, level = None,
+    object, df, h, 
+    prediction_intervals = None, 
+    level = None,
     loss = None,
-    engine = 'matplotlib',
-    max_insample_length = None
+    engine = 'plotly',
+    max_insample_length = None, 
+    plot_level = False
 ):
 
     object_class = str(object.__class__)
     if object_class == "<class 'statsforecast.core.StatsForecast'>":
         cv_res = object.cross_validation(
-            df = data, h = h, n_windows = 1,
+            df = df, h = h, n_windows = 1,
             prediction_intervals = prediction_intervals, 
             level = level
         )
     elif object_class == "<class 'mlforecast.forecast.MLForecast'>":
         cv_res = object.cross_validation(
-            df = data, h = h, n_windows = 1,
+            df = df, h = h, n_windows = 1,
             prediction_intervals = prediction_intervals, 
             level = level,
             static_features = []
         )
     elif object_class == "<class 'neuralforecast.core.NeuralForecast'>":
         cv_res = object.cross_validation(
-            df = data, n_windows = 1
+            df = df, n_windows = 1
         )
     else:
         raise Exception(f"Unknown object of class {object_class}")
     
+    # FIXME: correct to work with polars
     if loss == 'DistributionLoss':
         cv_res = cv_res \
             .loc[:, ~ cv_res.columns.str.endswith('-median')]
@@ -195,23 +192,26 @@ def calibrate_evaluate_plot(
         cv_res = cv_res
     
     acc_res = evaluate(
-        df = cv_res.drop(columns = 'cutoff'),
-        train_df = data,
+        df = cv_res.drop('cutoff'),
+        train_df = df,
         metrics = [bias, mae, mape, mse, rmse],
         agg_fn = 'mean'
     )
 
-    if level == None:
+    if not plot_level:
+        level = None
+
+    if level is None:
         p_res = plot_series(
-            df = data.head(n = -h),
-            forecasts_df = cv_res.drop('cutoff', axis = 1),
+            df = df.head(n = -h),
+            forecasts_df = cv_res.drop('cutoff'),
             max_insample_length = max_insample_length,
             engine = engine
         )
     else:
         p_res = plot_series(
-            df = data.head(n = -h),
-            forecasts_df = cv_res.drop('cutoff', axis = 1),
+            df = df.head(n = -h),
+            forecasts_df = cv_res.drop('cutoff'),
             level = level,  
             max_insample_length = max_insample_length,
             engine = engine
@@ -221,106 +221,105 @@ def calibrate_evaluate_plot(
 
     return res
 
-# function to get model names from data
-@pf.register_dataframe_method
-def get_models_name(data):
-    r = re.compile(r'(unique_id)|(ds)|(y)|(-lo-)|(-hi-)')
-    models_name = [i for i in data.columns if not r.search(i)]
-    return models_name
+# function to print accuracy table
+def print_accuracy_table(df, type = 'min'):
+    df = df.to_pandas()
+    if type == 'min':
+        data_res = df \
+            .set_index('metric') \
+            .style.highlight_min(color = 'green', axis = 1)
+    else:
+        data_res = df \
+            .set_index('metric') \
+            .style.highlight_max(color = 'red', axis = 1)   
+    return data_res
 
 # function to select columns of a dataframe based on regex
-@pf.register_dataframe_method
-def select_columns(data, regex = None):
+def select_columns(df, regex = None):
     if (regex == None):
         cols_name = ['unique_id', 'ds', 'y']
     else:
         regex = '(^unique_id$)|(^ds$)|(^y$)|' + regex
         r = re.compile(regex)
-        cols_name = [i for i in data.columns if r.search(i)]
-    return data[cols_name]
-
-# function to transform a dataframe to intermittent (in Nixtla's format)
-@pf.register_dataframe_method
-def to_intermittent(data, prop_of_zeros = 0.90):
-
-    n = len(data)
-    n_with_zeros = int(n * prop_of_zeros)
-    ids_with_zero = random.sample(range(1, n), n_with_zeros)
-    ids_with_zero.sort()
-    data_inter = data.copy()
-    data_inter.loc[ids_with_zero, 'y'] = 0
-
-    return data_inter
-
-# function to print accuracy table
-@pf.register_dataframe_method
-def print_accuracy_table(data, type = 'min'):
-    if type == 'min':
-        data_res = data \
-            .set_index('metric') \
-            .style.highlight_min(color = 'green', axis = 1)
-    else:
-        data_res = data \
-            .set_index('metric') \
-            .style.highlight_max(color = 'red', axis = 1)
-    return data_res
+        cols_name = [i for i in df.columns if r.search(i)]
+    return df[cols_name]
 
 # function to select the best model from accuracy table
-@pf.register_dataframe_method
-def get_best_model_name(accuracy_data, metric = 'rmse'):
-    data_filtered = accuracy_data \
+def get_best_model_name(accuracy_df, metric = 'rmse'):
+    model_name = accuracy_df \
         .melt(id_vars = 'metric') \
-        .query("metric == @metric") \
-        .reset_index() \
-        .drop('index', axis = 1)
-    id_min = data_filtered['value'].idxmin()
-    model_name = data_filtered.loc[id_min, 'variable']
+        .filter(pl.col('metric') == metric) \
+        .filter(pl.col('value') == pl.col('value').min()) \
+        .select('variable') \
+        .item()
     return model_name
 
 # function to get the best model forecast results
-@pf.register_dataframe_method
 def get_best_model_forecast(forecasts_data, accuracy_data, metric = 'rmse'):
     best_name = get_best_model_name(accuracy_data, metric = metric)
     best_forecasts = select_columns(forecasts_data, regex = f'{best_name}')
     return best_forecasts
 
 # function to back transform results
-@pf.register_dataframe_method
-def back_transform_data(data, params, forecasts_data = None):
+def back_transform_data(df, params, col = 'y'):
 
-    data_back_df = data \
-        .transform_columns(
-            columns = 'y', 
-            transform_func = lambda x: inv_standardize(
-                x, params['mean_x'], params['stdev_x']
-            )
+    back_df = df \
+        .with_columns(
+            inv_standardize(
+                col = col, 
+                mean = params['mean_y'], 
+                stdev = params['stdev_y']
+            ).alias(col)
         ) \
-        .transform_columns(
-            columns = 'y', 
-            transform_func = lambda x: inv_log_interval(
-                x, params['lower_bound'], params['upper_bound'], params['offset']
-            )
+        .with_columns(
+            inv_log_interval(
+                col = col, 
+                lb = params['lower_bound'], 
+                ub = params['upper_bound'], 
+                offset = params['offset']
+            ).alias(col)
         )
 
-    if forecasts_data is not None:
-        cols_to_transform = forecasts_data \
-            .drop(['unique_id', 'ds'], axis = 1) \
-            .columns
-        fcst_back_df = forecasts_data \
-            .transform_columns(
-                columns = cols_to_transform, 
-                transform_func = lambda x: inv_standardize(
-                    x, params['mean_x'], params['stdev_x']
-                )
-            ) \
-            .transform_columns(
-                columns = cols_to_transform, 
-                transform_func = lambda x: inv_log_interval(
-                    x, params['lower_bound'], params['upper_bound'], params['offset']
-                )
-            )
-        res = {'data_back': data_back_df, 'forecasts_back': fcst_back_df}
-    else:
-        res = data_back_df
+    return back_df
 
-    return res
+# function to back transform forecast results
+def back_transform_forecasts(df, params):
+
+    cols_to_transform = df.drop('unique_id', 'ds').columns
+    back_df = df
+    for col in cols_to_transform:
+        back_df = back_transform_data(back_df, params, col)
+
+    return back_df
+
+# function to get model names from data
+def get_models_name(data):
+    r = re.compile(r'(unique_id)|(ds)|(y)|(-lo-)|(-hi-)')
+    models_name = [i for i in data.columns if not r.search(i)]
+    return models_name
+
+# function to transform a dataframe to intermittent (in Nixtla's format)
+def to_intermittent(df, prop_of_zeros = 0.90):
+
+    n = len(df)
+    n_with_zeros = int(n * prop_of_zeros)
+    ids_with_zero = random.sample(range(1, n), n_with_zeros)
+    ids_with_zero.sort()
+    df = df
+    inter_df = df \
+        .with_row_count("row_nr") \
+        .with_columns(
+            pl.when(pl.col("row_nr").is_in(ids_with_zero))
+            .then(pl.lit(0))
+            .otherwise(pl.col("y"))
+            .alias("y")
+        ) \
+        .drop("row_nr")
+
+    return inter_df
+
+
+
+
+
+
