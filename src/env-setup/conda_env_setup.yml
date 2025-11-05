@@ -62,4 +62,7 @@ dependencies:
       - hierarchicalforecast >= 1.0.0, < 2.0.0
       - nixtla
 
+      # Foundation & Agents
+      - timecopilot < 1.0.0
+
 
