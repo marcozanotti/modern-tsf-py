@@ -19,6 +19,7 @@ import sys
 sys.path.insert(0, '../../src/Python/utils')
 from utils import load_data
 from pytimetk import plot_timeseries
+import polars as pl
 ```
 
 # Packages
@@ -62,7 +63,7 @@ All these data are stored into the company database and can be used to analyze t
 
 ```{python, echo=FALSE}
 load_data("../../data/email/", "email_prep") \
-  .plot_timeseries('ds', 'y', smooth = False)
+  .tk.plot_timeseries('ds', 'y', smooth = False)
 ```
 
 
@@ -76,6 +77,6 @@ We will use a sample of the M4 Hourly dataset, which consists of hourly time ser
 
 ```{python, echo=FALSE}
 load_data("../../data/m4/", "m4_prep_sample") \
-  .groupby('unique_id') \
-  .plot_timeseries('ds', 'y', facet_ncol = 2, smooth = False) 
+  .group_by('unique_id') \
+  .tk.plot_timeseries('ds', 'y', facet_ncol = 2, smooth = False) 
 ```
