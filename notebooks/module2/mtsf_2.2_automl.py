@@ -1,7 +1,8 @@
-# Time Series Forecasting: Machine Learning and Deep Learning with R & Python ----
-
-# Lecture 8: Automatic Machine Learning Algorithms ------------------------
+# Modern Time Series Forecasting with Python ----
 # Marco Zanotti
+
+# Lecture 2.2: Automatic Machine Learning Algorithms ------------------------
+
 
 # Goals:
 # - Nixtla Auto-models

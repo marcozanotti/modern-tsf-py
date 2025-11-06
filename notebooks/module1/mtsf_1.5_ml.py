@@ -64,6 +64,7 @@ y_df.tk.plot_timeseries('ds', 'y', smooth = False)
 
 
 # * Forecast Horizon ------------------------------------------------------
+
 horizon = 7 * 8 # 8 weeks
 
 

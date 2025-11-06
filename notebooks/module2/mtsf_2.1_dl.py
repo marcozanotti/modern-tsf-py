@@ -1,90 +1,86 @@
-# Time Series Forecasting: Machine Learning and Deep Learning with R & Python ----
-
-# Lecture 7: Deep Learning Algorithms -------------------------------------
+# Modern Time Series Forecasting with Python ----
 # Marco Zanotti
 
+# Lecture 2.1: Deep Learning Algorithms -------------------------------------
+
 # Goals:
-# - GluonTS / Torch
-# - Deep AR
+# - RNN
+# - TCN
 # - NBEATS
-# - GP Forecaster
-# - Deep State
+# - NHITS
+# - Transformers
 
 
 
 # Packages ----------------------------------------------------------------
 
-import os
-import pickle
 import re
-
-import numpy as np
-import pandas as pd
-# import polars as pl
+import pickle
+import sys
+sys.path.insert(0, 'src/Python/utils')
+from utils import (
+    plot_cross_validation_plan, select_columns, calibrate_evaluate_plot,
+    print_accuracy_table, get_best_model_forecast, 
+    back_transform_data, back_transform_forecasts
+)
 import pytimetk as tk
-
 
 from neuralforecast import NeuralForecast
 from neuralforecast.losses.pytorch import MQLoss, DistributionLoss, MSE
-
-from utilsforecast.evaluation import evaluate
-from utilsforecast.losses import bias, mae, mape, mse, rmse
+from mlforecast.utils import PredictionIntervals
 from utilsforecast.plotting import plot_series
-
-import python_extensions as pex
-
-pd.set_option("display.max_rows", 3)
-os.environ['NIXTLA_ID_AS_COL'] = '1'
 
 
 
 # Data & Artifacts --------------------------------------------------------
 
-with open('artifacts/Python/feature_engineering_artifacts_list.pkl', 'rb') as f:
+with open('data/email/artifacts/feature_engineering_artifacts_list.pkl', 'rb') as f:
     data_loaded = pickle.load(f)
 data_prep_df = data_loaded['data_prep_df']
 forecast_df = data_loaded['forecast_df']
 feature_sets = data_loaded['feature_sets']
 params = data_loaded['transform_params']
 
-plot_series(data_prep_df).show()
+
+# * Recipes ---------------------------------------------------------------
+
+# in DL modeling the features are internally created by the deep representation
+# pure external regressors should be passed (like promo)
+y_df = select_columns(data_prep_df)
+y_xregs_df = select_columns(data_prep_df, 'promo')
+
+forecast_y_df = select_columns(forecast_df).drop('y')
+forecast_xregs_df = select_columns(forecast_df, 'promo').drop('y')
+
+
+y_df.tk.plot_timeseries('ds', 'y', smooth = False)
+
 
 # * Forecast Horizon ------------------------------------------------------
+
 horizon = 7 * 8 # 8 weeks
+
 
 # * Prediction Intervals --------------------------------------------------
 
 levels = [80, 95]
-
+intervals = PredictionIntervals(h = horizon, n_windows = 2)
 # In DL models prediction intervals are embedded in the model, usually
 # through the choice of the loss function. 
 help(MQLoss)
 # Some DL models are probabilistic by construction.
 help(DistributionLoss)
 
+# the loss function determines how probabilistic forecasts are obtained
+# if a point forecast loss is used (like MSE), then probabilistic forecasts
+# have to be computed using Conformal Prediction Intervals
+# otherwise if a probabilistic loss is used (like MQLoss), then predictions
+# are intrinsecally probabilistic, and the -median represents the point forecast 
+
+
 # * Cross-validation Plan -------------------------------------------------
 
-pex.plot_cross_validation_plan(
-    data_prep_df, freq = 'D', h = horizon, 
-    n_windows = 1, step_size = 1, 
-    engine = 'matplotlib'
-)
-
-# * External Regressors ---------------------------------------------------
-
-# back-transform the y to use neuralforecast full workflow
-# but results are not directly comparable to those of TS because 
-# the predictions are automatically back-transformed
-# y_df = data_prep_df \
-#     .select_columns() \
-#     .back_transform_data(params = params)
-# y_xregs_df = data_prep_df \
-#     .select_columns(
-#         regex = '(event)|(holiday)|(inter_)|(ds_mweek_2)|(_sin_)|(_cos_)'
-#     ) \
-#     .back_transform_data(params = params)
-y_df = data_prep_df.select_columns()
-y_xregs_df = data_prep_df
+plot_cross_validation_plan(y_df, freq = '1d', h = horizon, n_windows = 1, step_size = 1)
 
 
 
@@ -121,7 +117,32 @@ y_xregs_df = data_prep_df
 # - Baseline model for DL
 from neuralforecast.models import MLP, TiDE, TSMixer, TSMixerx
 
+
 # * Engines ---------------------------------------------------------------
+
+# example with MSE and MQLoss losses
+# models_mlp = [
+#     MLP(
+#         h = horizon,
+#         input_size = 30,
+#         num_layers = 2,
+#         hidden_size = 128,
+#         max_steps = 50,
+#         loss = MSE(),
+#         random_seed = 0,
+#         alias = 'MLP_mse' 
+#     ),
+#     MLP(
+#         h = horizon,
+#         input_size = 30,
+#         num_layers = 2,
+#         hidden_size = 128,
+#         max_steps = 50,
+#         loss = MQLoss(level = levels),
+#         random_seed = 0,
+#         alias = 'MLP_mql' 
+#     ),
+# ]
 
 models_mlp = [
     MLP(
@@ -129,7 +150,7 @@ models_mlp = [
         input_size = 30,
         num_layers = 2,
         hidden_size = 128,
-        max_steps = 100,
+        max_steps = 50,
         loss = MQLoss(level = levels),
         random_seed = 0,
         alias = 'MLP' 
@@ -139,10 +160,10 @@ models_mlp = [
         input_size = 14,
         num_layers = 2,
         hidden_size = 128,
-        max_steps = 300,
+        max_steps = 50,
         loss = MQLoss(level = levels),
-        futr_exog_list = ['y_lag_56', 'event'],
-        hist_exog_list = ['y_lag_56', 'event'],
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0,
         alias = 'MLP_exog' 
     ),
@@ -152,7 +173,7 @@ models_mlp = [
         hidden_size = 128,
         num_encoder_layers = 2,
         num_decoder_layers = 2,
-        max_steps = 100,
+        max_steps = 50,
         loss = MQLoss(level = levels),
         random_seed = 0,
         alias = 'TiDE'
@@ -163,69 +184,72 @@ models_mlp = [
         hidden_size = 128,
         num_encoder_layers = 2,
         num_decoder_layers = 2,
-        max_steps = 300,
+        max_steps = 50,
         loss = MQLoss(level = levels),
-        futr_exog_list = ['y_lag_56', 'event'],
-        hist_exog_list = ['y_lag_56', 'event'],
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0,
         alias = 'TiDE_exog'
     ),
-    # ATTENTION: TSMixer does not accept MQLoss
-    # TSMixer(
-    #     h = horizon,
-    #     input_size = 30,
-    #     n_series = 1,
-    #     n_block = 2,
-    #     ff_dim = 64,
-    #     max_steps = 100,
-    #     loss = MSE(),
-    #     random_seed = 0,
-    #     alias = 'TSMixer'
-    # ),
-    # TSMixerx(
-    #     h = horizon,
-    #     input_size = 30,
-    #     n_series = 1,
-    #     n_block = 2,
-    #     ff_dim = 64,
-    #     max_steps = 300,
-    #     loss = MSE(),
-    #     futr_exog_list = ['y_lag_56', 'event'],
-    #     hist_exog_list = ['y_lag_56', 'event'],
-    #     random_seed = 0,
-    #     alias = 'TSMixer_exog'
-    # )
+    TSMixer(
+        h = horizon,
+        input_size = 30,
+        n_series = 1,
+        n_block = 2,
+        ff_dim = 64,
+        max_steps = 50,
+        loss = MQLoss(level = levels),
+        random_seed = 0,
+        alias = 'TSMixer'
+    ),
+    TSMixerx(
+        h = horizon,
+        input_size = 30,
+        n_series = 1,
+        n_block = 2,
+        ff_dim = 64,
+        max_steps = 50,
+        loss = MQLoss(level = levels),
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
+        random_seed = 0,
+        alias = 'TSMixer_exog'
+    )
 ]
+nf_mlp = NeuralForecast(models = models_mlp, freq = '1d')
 
-nf_mlp = NeuralForecast(
-    models = models_mlp,
-    freq = 'D'
-)
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_mlp = pex.calibrate_evaluate_plot(
-    object = nf_mlp, data = y_xregs_df.dropna(), 
-    h = horizon, level = levels, loss = 'MQLoss',
+# example with MSE and MQLoss losses
+# cv_res_mlp = calibrate_evaluate_plot(
+#     nf_mlp, df = y_xregs_df, h = horizon, 
+#     prediction_intervals = intervals, level = levels,
+#     loss = 'MQLoss', engine = 'plotly', max_insample_length = horizon * 2  
+# )
+
+cv_res_mlp = calibrate_evaluate_plot(
+    nf_mlp, df = y_xregs_df, h = horizon, loss = 'MQLoss', 
     engine = 'plotly', max_insample_length = horizon * 2  
 )
 cv_res_mlp['cv_results']
 cv_res_mlp['accuracy_table']
 cv_res_mlp['plot'].show()
 
+
 # * Refitting & Forecasting -----------------------------------------------
 
-nf_mlp.fit(df = y_xregs_df.dropna()) 
+# example with MSE and MQLoss losses
+# nf_mlp.fit(df = y_xregs_df, prediction_intervals = intervals) 
 
-preds_df_mlp = nf_mlp.predict(futr_df = forecast_df) \
-    .rename(columns = lambda x: re.sub('-median', '', x))
+nf_mlp.fit(df = y_xregs_df) 
+
+preds_df_mlp = nf_mlp.predict(futr_df = forecast_xregs_df) \
+    .rename(lambda x: re.sub('-median', '', x))
 preds_df_mlp
 
 plot_series(
-    data_prep_df, preds_df_mlp,
-    max_insample_length = horizon * 2,
-    level = levels,
-    engine = 'plotly'
+    y_xregs_df, preds_df_mlp, max_insample_length = horizon * 2, engine = 'plotly'
 ).show()
 
 
@@ -248,7 +272,7 @@ models_kan = [
         input_size = 30,
         hidden_size = 128,
         n_hidden_layers = 2,
-        max_steps = 100,
+        max_steps = 50,
         loss = MQLoss(level = levels),
         random_seed = 0,
         alias = 'KAN' 
@@ -258,121 +282,26 @@ models_kan = [
         input_size = 30,
         hidden_size = 128,
         n_hidden_layers = 2,
-        max_steps = 300,
+        max_steps = 50,
         loss = MQLoss(level = levels),
-        futr_exog_list = ['y_lag_56', 'event'],
-        hist_exog_list = ['y_lag_56', 'event'],
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0,
         alias = 'KAN_exog' 
     )
 ]
+nf_kan = NeuralForecast(models = models_kan, freq = '1d')
 
-nf_kan = NeuralForecast(
-    models = models_kan,
-    freq = 'D'
-)
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_kan = pex.calibrate_evaluate_plot(
-    object = nf_kan, data = y_xregs_df.dropna(), 
-    h = horizon, level = levels, loss = 'MQLoss',
+cv_res_kan = calibrate_evaluate_plot(
+    nf_kan, df = y_xregs_df, h = horizon, loss = 'MQLoss', 
     engine = 'plotly', max_insample_length = horizon * 2  
 )
 cv_res_kan['cv_results']
 cv_res_kan['accuracy_table']
 cv_res_kan['plot'].show()
-
-
-
-# RNN ---------------------------------------------------------------------
-
-# Multi Layer Elman RNN (RNN), with MLP decoder. The network has tanh or 
-# relu non-linearities, it is trained using ADAM stochastic gradient 
-# descent. The network accepts static, historic and future exogenous data.
-
-# https://nixtlaverse.nixtla.io/neuralforecast/models.rnn.html
-
-# - Baseline model for DL in time series
-from neuralforecast.models import RNN
-
-# * Engines ---------------------------------------------------------------
-
-# Feauture engineering is usually performed automatically by DL models. 
-# If you want to add some specific feauture you have to manually create
-# them and use the 'futr_exog_list', 'hist_exog_list' or 'stat_exog_list' 
-# parameters within the engine.
-
-models_rnn = [
-    RNN(
-        h = horizon,
-        input_size = -1,
-        inference_input_size = -1,
-        encoder_n_layers = 2,
-        encoder_hidden_size = 128,
-        encoder_activation = 'relu',
-        decoder_layers = 2,
-        decoder_hidden_size = 128,
-        max_steps = 100,
-        loss = MQLoss(level = levels),
-        random_seed = 0,
-        alias = 'RNN'                
-    ),
-    RNN(
-        h = horizon,
-        input_size = -1,
-        inference_input_size = -1,
-        encoder_n_layers = 2,
-        encoder_hidden_size = 128,
-        encoder_activation = 'relu',
-        decoder_layers = 2,
-        decoder_hidden_size = 128,
-        max_steps = 300,
-        loss = MQLoss(level = levels),
-        # scaler_type = 'robust',
-        futr_exog_list = ['y_lag_56', 'event'],
-        hist_exog_list = ['y_lag_56', 'event'],
-        # stat_exog_list = [],
-        random_seed = 0,
-        alias = 'RNN_exog'                
-    )
-]
-
-nf_rnn = NeuralForecast(
-    models = models_rnn,
-    freq = 'D'
-)
-
-# * Evaluation ------------------------------------------------------------
-
-cv_res_rnn = pex.calibrate_evaluate_plot(
-    object = nf_rnn, data = y_xregs_df.dropna(), 
-    h = horizon, level = levels, loss = 'MQLoss',
-    engine = 'plotly', max_insample_length = horizon * 2  
-)
-cv_res_rnn['cv_results']
-cv_res_rnn['accuracy_table']
-cv_res_rnn['plot'].show()
-
-# * Refitting & Forecasting -----------------------------------------------
-
-# ATTENTION: the .predict method have to be called after the .fit
-# on the same NeuralForecast object. Do not store the fit.
-# No need to provide the forecast horizon to the model because it 
-# has been trained for that!
-
-nf_rnn.fit(df = y_xregs_df.dropna()) 
-
-preds_df_rnn = nf_rnn.predict(futr_df = forecast_df) \
-    .rename(columns = lambda x: re.sub('-median', '', x))
-preds_df_rnn
-
-plot_series(
-    data_prep_df, preds_df_rnn,
-    max_insample_length = horizon * 2,
-    level = levels,
-    engine = 'plotly'
-).show()
 
 
 
@@ -394,6 +323,7 @@ plot_series(
 # - Baseline non-parametric global model 
 from neuralforecast.models import DeepNPTS
 
+
 # * Engines ---------------------------------------------------------------
 
 models_dnpts = [
@@ -402,7 +332,7 @@ models_dnpts = [
         input_size = 30,
         n_layers = 2,
         hidden_size = 128,
-        max_steps = 100,
+        max_steps = 50,
         random_seed = 0,
         alias = 'DeepNPTS' 
     ),
@@ -411,24 +341,20 @@ models_dnpts = [
         input_size = 30,
         n_layers = 2,
         hidden_size = 128,
-        max_steps = 300,
-        futr_exog_list = ['y_lag_56', 'event'],
-        hist_exog_list = ['y_lag_56', 'event'],
+        max_steps = 50,
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0,
         alias = 'DeepNPTS_exog' 
     )
 ]
-
-nf_dnpts = NeuralForecast(
-    models = models_dnpts,
-    freq = 'D'
-)
+nf_dnpts = NeuralForecast(models = models_dnpts, freq = '1d')
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_dnpts = pex.calibrate_evaluate_plot(
-    object = nf_dnpts, data = y_xregs_df.dropna(), 
-    h = horizon, level = None,
+cv_res_dnpts = calibrate_evaluate_plot(
+    nf_dnpts, df = y_xregs_df, h = horizon, 
+    prediction_intervals = intervals, level = levels,
     engine = 'plotly', max_insample_length = horizon * 2  
 )
 cv_res_dnpts['cv_results']
@@ -437,7 +363,14 @@ cv_res_dnpts['plot'].show()
 
 
 
-# LSTM & GRU --------------------------------------------------------------
+# RNN ---------------------------------------------------------------------
+
+# Multi Layer Elman RNN (RNN), with MLP decoder. The network has tanh or 
+# relu non-linearities, it is trained using ADAM stochastic gradient 
+# descent. The network accepts static, historic and future exogenous data.
+
+# https://nixtlaverse.nixtla.io/neuralforecast/models.rnn.html
+
 
 # The Long Short-Term Memory Recurrent Neural Network (LSTM), uses a 
 # multilayer LSTM encoder and an MLP decoder. It builds upon the LSTM-cell 
@@ -459,11 +392,63 @@ cv_res_dnpts['plot'].show()
 # https://nixtlaverse.nixtla.io/neuralforecast/models.lstm.html
 # https://nixtlaverse.nixtla.io/neuralforecast/models.gru.html
 
-from neuralforecast.models import LSTM, GRU
+
+# The Dilated Recurrent Neural Network (DilatedRNN) addresses common 
+# challenges of modeling long sequences like vanishing gradients, 
+# computational efficiency, and improved model flexibility to model 
+# complex relationships while maintaining its parsimony. The DilatedRNN 
+# builds a deep stack of RNN layers using skip conditions on the temporal 
+# and the network’s depth dimensions. The temporal dilated recurrent 
+# skip connections offer the capability to focus on multi-resolution inputs.
+
+# https://nixtlaverse.nixtla.io/neuralforecast/models.dilated_rnn.html
+
+
+# - RNN baseline model for DL in time series
+# - LSTM / GRU more advanced
+from neuralforecast.models import RNN, LSTM, GRU, DilatedRNN
+
 
 # * Engines ---------------------------------------------------------------
 
-models_lstm = [
+# Feauture engineering is usually performed automatically by DL models. 
+# If you want to add some specific feauture you have to manually create
+# them and use the 'futr_exog_list', 'hist_exog_list' or 'stat_exog_list' 
+# parameters within the engine.
+
+models_rnn = [
+    RNN(
+        h = horizon,
+        input_size = -1,
+        inference_input_size = -1,
+        encoder_n_layers = 2,
+        encoder_hidden_size = 128,
+        encoder_activation = 'relu',
+        decoder_layers = 2,
+        decoder_hidden_size = 128,
+        max_steps = 50,
+        loss = MQLoss(level = levels),
+        random_seed = 0,
+        alias = 'RNN'                
+    ),
+    RNN(
+        h = horizon,
+        input_size = -1,
+        inference_input_size = -1,
+        encoder_n_layers = 2,
+        encoder_hidden_size = 128,
+        encoder_activation = 'relu',
+        decoder_layers = 2,
+        decoder_hidden_size = 128,
+        max_steps = 50,
+        loss = MQLoss(level = levels),
+        # scaler_type = 'robust',
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
+        # stat_exog_list = [],
+        random_seed = 0,
+        alias = 'RNN_exog'                
+    ),
     LSTM(
         h = horizon,
         input_size = -1,
@@ -472,7 +457,7 @@ models_lstm = [
         encoder_hidden_size = 128,
         decoder_layers = 2,
         decoder_hidden_size = 128,
-        max_steps = 100,
+        max_steps = 50,
         loss = MQLoss(level = levels),
         random_seed = 0,
         alias = 'LSTM'                
@@ -485,10 +470,10 @@ models_lstm = [
         encoder_hidden_size = 128,
         decoder_layers = 2,
         decoder_hidden_size = 128,
-        max_steps = 300,
+        max_steps = 50,
         loss = MQLoss(level = levels),
-        futr_exog_list = ['y_lag_56', 'event'],
-        hist_exog_list = ['y_lag_56', 'event'],
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0,
         alias = 'LSTM_exog'                
     ),
@@ -501,7 +486,7 @@ models_lstm = [
         encoder_activation = 'relu',
         decoder_layers = 2,
         decoder_hidden_size = 128,
-        max_steps = 100,
+        max_steps = 50,
         loss = MQLoss(level = levels),
         random_seed = 0,
         alias = 'GRU'  
@@ -515,50 +500,13 @@ models_lstm = [
         encoder_activation = 'relu',
         decoder_layers = 2,
         decoder_hidden_size = 128,
-        max_steps = 300,
+        max_steps = 50,
         loss = MQLoss(level = levels),
-        futr_exog_list = ['y_lag_56', 'event'],
-        hist_exog_list = ['y_lag_56', 'event'],
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0,
         alias = 'GRU_exog'  
-    )
-]
-
-nf_lstm = NeuralForecast(
-    models = models_lstm,
-    freq = 'D'
-)
-
-# * Evaluation ------------------------------------------------------------
-
-cv_res_lstm = pex.calibrate_evaluate_plot(
-    object = nf_lstm, data = y_xregs_df.dropna(), 
-    h = horizon, level = levels, loss = 'MQLoss',
-    engine = 'plotly', max_insample_length = horizon * 2  
-)
-cv_res_lstm['cv_results']
-cv_res_lstm['accuracy_table']
-cv_res_lstm['plot'].show()
-
-
-
-# Dilated RNN -------------------------------------------------------------
-
-# The Dilated Recurrent Neural Network (DilatedRNN) addresses common 
-# challenges of modeling long sequences like vanishing gradients, 
-# computational efficiency, and improved model flexibility to model 
-# complex relationships while maintaining its parsimony. The DilatedRNN 
-# builds a deep stack of RNN layers using skip conditions on the temporal 
-# and the network’s depth dimensions. The temporal dilated recurrent 
-# skip connections offer the capability to focus on multi-resolution inputs.
-
-# https://nixtlaverse.nixtla.io/neuralforecast/models.dilated_rnn.html
-
-from neuralforecast.models import DilatedRNN
-
-# * Engines ---------------------------------------------------------------
-
-models_drnn = [
+    ),
     DilatedRNN(
         h = horizon,
         input_size = -1,
@@ -566,7 +514,7 @@ models_drnn = [
         cell_type = 'RNN',
         encoder_hidden_size = 128,
         decoder_hidden_size = 128,
-        max_steps = 100,
+        max_steps = 50,
         loss = MQLoss(level = levels),
         random_seed = 0,
         alias = 'DRNN'                
@@ -578,30 +526,26 @@ models_drnn = [
         cell_type = 'RNN',
         encoder_hidden_size = 128,
         decoder_hidden_size = 128,
-        max_steps = 300,
+        max_steps = 50,
         loss = MQLoss(level = levels),
-        futr_exog_list = ['y_lag_56', 'event'],
-        hist_exog_list = ['y_lag_56', 'event'],
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0,
         alias = 'DRNN_exog'                
     )
 ]
+nf_rnn = NeuralForecast(models = models_rnn, freq = '1d')
 
-nf_drnn = NeuralForecast(
-    models = models_drnn,
-    freq = 'D'
-)
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_drnn = pex.calibrate_evaluate_plot(
-    object = nf_drnn, data = y_xregs_df.dropna(), 
-    h = horizon, level = levels, loss = 'MQLoss',
+cv_res_rnn = calibrate_evaluate_plot(
+    nf_rnn, df = y_xregs_df, h = horizon, loss = 'MQLoss',
     engine = 'plotly', max_insample_length = horizon * 2  
 )
-cv_res_drnn['cv_results']
-cv_res_drnn['accuracy_table']
-cv_res_drnn['plot'].show()
+cv_res_rnn['cv_results']
+cv_res_rnn['accuracy_table']
+cv_res_rnn['plot'].show()
 
 
 
@@ -634,6 +578,7 @@ cv_res_drnn['plot'].show()
 
 from neuralforecast.models import TCN, BiTCN
 
+
 # * Engines ---------------------------------------------------------------
 
 models_tcn = [
@@ -646,7 +591,7 @@ models_tcn = [
         encoder_hidden_size = 128,
         decoder_layers = 2,
         decoder_hidden_size = 128,
-        max_steps = 100,
+        max_steps = 50,
         loss = MQLoss(level = levels),
         random_seed = 0,
         alias = 'TCN'                
@@ -660,10 +605,10 @@ models_tcn = [
         encoder_hidden_size = 128,
         decoder_layers = 2,
         decoder_hidden_size = 128,
-        max_steps = 100,
+        max_steps = 50,
         loss = MQLoss(level = levels),
-        futr_exog_list = ['y_lag_56', 'event'],
-        hist_exog_list = ['y_lag_56', 'event'],
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0,
         alias = 'TCN_exog'                
     ),
@@ -671,7 +616,7 @@ models_tcn = [
         h = horizon,
         input_size = 30,
         hidden_size = 128,
-        max_steps = 100,
+        max_steps = 50,
         loss = MQLoss(level = levels),
         random_seed = 0,
         alias = 'BiTCN'                
@@ -680,25 +625,21 @@ models_tcn = [
         h = horizon,
         input_size = 30,
         hidden_size = 128,
-        max_steps = 100,
+        max_steps = 50,
         loss = MQLoss(level = levels),
-        futr_exog_list = ['y_lag_56', 'event'],
-        hist_exog_list = ['y_lag_56', 'event'],
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0,
         alias = 'BiTCN_exog'                
     )
 ]
+nf_tcn = NeuralForecast(models = models_tcn, freq = '1d')
 
-nf_tcn = NeuralForecast(
-    models = models_tcn,
-    freq = 'D'
-)
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_tcn = pex.calibrate_evaluate_plot(
-    object = nf_tcn, data = y_xregs_df.dropna(), 
-    h = horizon, level = levels, loss = 'MQLoss',
+cv_res_tcn = calibrate_evaluate_plot(
+    nf_tcn, df = y_xregs_df, h = horizon, loss = 'MQLoss',
     engine = 'plotly', max_insample_length = horizon * 2  
 )
 cv_res_tcn['cv_results']
@@ -728,36 +669,33 @@ cv_res_tcn['plot'].show()
 # - Benchmark models for Transformers
 from neuralforecast.models import NLinear, DLinear
 
+
 # * Engines ---------------------------------------------------------------
 
 models_lin = [
     NLinear(
         h = horizon, 
         input_size = 365,
-        max_steps = 100,
+        max_steps = 50,
         loss = MQLoss(level = levels),
         random_seed = 0       
     ), 
     DLinear(
         h = horizon, 
         input_size = 365,
-        max_steps = 100,
+        max_steps = 50,
         moving_avg_window = 31,
         loss = MQLoss(level = levels),
         random_seed = 0
     )
 ]
+nf_lin = NeuralForecast(models = models_lin, freq = '1d')
 
-nf_lin = NeuralForecast(
-    models = models_lin,
-    freq = 'D'
-)
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_lin = pex.calibrate_evaluate_plot(
-    object = nf_lin, data = y_xregs_df.dropna(), 
-    h = horizon, level = levels, loss = 'MQLoss',
+cv_res_lin = calibrate_evaluate_plot(
+    nf_lin, df = y_xregs_df, h = horizon, loss = 'MQLoss',
     engine = 'plotly', max_insample_length = horizon * 2  
 )
 cv_res_lin['cv_results']
@@ -785,6 +723,7 @@ cv_res_lin['plot'].show()
 
 from neuralforecast.models import DeepAR
 
+
 # * Engines ---------------------------------------------------------------
 
 models_deepar = [
@@ -796,7 +735,7 @@ models_deepar = [
         decoder_hidden_layers = 0,
         decoder_hidden_size = 0, 
         trajectory_samples = 200,
-        max_steps = 100,
+        max_steps = 50,
         loss = DistributionLoss(distribution = 'Normal', level = levels, return_params = False),
         random_seed = 0,
         alias = 'DeepAR'
@@ -809,24 +748,20 @@ models_deepar = [
         decoder_hidden_layers = 0,
         decoder_hidden_size = 0, 
         trajectory_samples = 200,
-        max_steps = 300,
+        max_steps = 50,
         loss = DistributionLoss(distribution = 'Normal', level = levels, return_params = False),
-        futr_exog_list = ['y_lag_56', 'event'],
+        futr_exog_list = ['promo'],
         random_seed = 0,
         alias = 'DeepAR_exog'
     )
 ]
+nf_deepar = NeuralForecast(models = models_deepar, freq = '1d')
 
-nf_deepar = NeuralForecast(
-    models = models_deepar,
-    freq = 'D'
-)
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_deepar = pex.calibrate_evaluate_plot(
-    object = nf_deepar, data = y_xregs_df.dropna(), 
-    h = horizon, level = levels, loss = 'DistributionLoss',
+cv_res_deepar = calibrate_evaluate_plot(
+    nf_deepar, df = y_xregs_df, h = horizon, loss = 'DistributionLoss',
     engine = 'plotly', max_insample_length = horizon * 2  
 )
 cv_res_deepar['cv_results']
@@ -872,6 +807,7 @@ cv_res_deepar['plot'].show()
 
 from neuralforecast.models import NBEATS, NBEATSx, NHITS
 
+
 # * Engines ---------------------------------------------------------------
 
 models_nbeats = [
@@ -880,7 +816,7 @@ models_nbeats = [
         input_size = 30,
         stack_types = ['identity', 'trend', 'seasonality'],
         loss = MQLoss(level = levels),
-        max_steps = 100,
+        max_steps = 50,
         random_seed = 0
     ), 
     NBEATSx(
@@ -888,9 +824,9 @@ models_nbeats = [
         input_size = 30,
         stack_types = ['identity', 'trend', 'seasonality'],
         loss = MQLoss(level = levels),
-        max_steps = 300,
-        futr_exog_list = ['y_lag_56', 'event'],
-        hist_exog_list = ['y_lag_56', 'event'],
+        max_steps = 50,
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0
     ), 
     NHITS(
@@ -898,7 +834,7 @@ models_nbeats = [
         input_size = 30,
         n_freq_downsample = [2, 1, 1],
         loss = MQLoss(level = levels),
-        max_steps = 100,
+        max_steps = 50,
         random_seed = 0, 
         alias = 'NHITS'
     ),
@@ -907,24 +843,19 @@ models_nbeats = [
         input_size = 30,
         n_freq_downsample = [2, 1, 1],
         loss = MQLoss(level = levels),
-        max_steps = 300,
-        futr_exog_list = ['y_lag_56', 'event'],
-        hist_exog_list = ['y_lag_56', 'event'],
+        max_steps = 50,
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0, 
         alias = 'NHITS_exog'
     )
 ]
-
-nf_nbeats = NeuralForecast(
-    models = models_nbeats,
-    freq = 'D'
-)
+nf_nbeats = NeuralForecast(models = models_nbeats, freq = '1d')
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_nbeats = pex.calibrate_evaluate_plot(
-    object = nf_nbeats, data = y_xregs_df.dropna(), 
-    h = horizon, level = levels, loss = 'MQLoss',
+cv_res_nbeats = calibrate_evaluate_plot(
+    nf_nbeats, df = y_xregs_df, h = horizon, loss = 'MQLoss',
     engine = 'plotly', max_insample_length = horizon * 2  
 )
 cv_res_nbeats['cv_results']
@@ -947,6 +878,7 @@ cv_res_nbeats['plot'].show()
 
 from neuralforecast.models import TimesNet
 
+
 # * Engines ---------------------------------------------------------------
 
 models_tnet = [
@@ -956,7 +888,7 @@ models_tnet = [
         hidden_size = 16,
         conv_hidden_size = 32,
         loss = MQLoss(level = levels),
-        max_steps = 100,
+        max_steps = 50,
         random_seed = 0,
         alias = 'TimesNET'
     ), 
@@ -966,23 +898,19 @@ models_tnet = [
         hidden_size = 16,
         conv_hidden_size = 32,
         loss = MQLoss(level = levels),
-        max_steps = 100,
-        futr_exog_list = ['y_lag_56', 'event'],
+        max_steps = 50,
+        futr_exog_list = ['promo'],
         random_seed = 0,
         alias = 'TimesNET_exog'
     )
 ]
+nf_tnet = NeuralForecast(models = models_tnet, freq = '1d')
 
-nf_tnet = NeuralForecast(
-    models = models_tnet,
-    freq = 'D'
-)
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_tnet = pex.calibrate_evaluate_plot(
-    object = nf_tnet, data = y_xregs_df.dropna(), 
-    h = horizon, level = levels, loss = 'MQLoss',
+cv_res_tnet = calibrate_evaluate_plot(
+    nf_tnet, df = y_xregs_df, h = horizon, loss = 'MQLoss',
     engine = 'plotly', max_insample_length = horizon * 2  
 )
 cv_res_tnet['cv_results']
@@ -991,7 +919,7 @@ cv_res_tnet['plot'].show()
 
 
 
-# TRANSFORMERS ---------------------------------------------------------------------
+# Transformers ------------------------------------------------------------
 
 # Vanilla
 # Autoformer
@@ -1084,8 +1012,7 @@ cv_res_tnet['plot'].show()
 # https://nixtlaverse.nixtla.io/neuralforecast/models.itransformer.html
 
 from neuralforecast.models import (
-    VanillaTransformer, Autoformer, Informer, FEDformer, 
-    TFT, PatchTST, iTransformer
+    VanillaTransformer, Autoformer, Informer, FEDformer, TFT, PatchTST
 )
 
 # * Engines ---------------------------------------------------------------
@@ -1100,7 +1027,7 @@ models_tformer = [
         encoder_layers = 2,
         decoder_layers = 1,
         loss = MQLoss(level = levels),
-        max_steps = 100,
+        max_steps = 50,
         random_seed = 0,
         alias = 'Vanilla'
     ),
@@ -1113,8 +1040,8 @@ models_tformer = [
         encoder_layers = 2,
         decoder_layers = 1,
         loss = MQLoss(level = levels),
-        max_steps = 100,
-        futr_exog_list = ['event'],
+        max_steps = 50,
+        futr_exog_list = ['promo'],
         random_seed = 0,
         alias = 'Vanilla_exog'
     ),
@@ -1127,7 +1054,7 @@ models_tformer = [
         encoder_layers = 2,
         decoder_layers = 1,
         loss = MQLoss(level = levels),
-        max_steps = 100,
+        max_steps = 50,
         random_seed = 0,
         alias = 'Autoformer'
     ),
@@ -1140,8 +1067,8 @@ models_tformer = [
         encoder_layers = 2,
         decoder_layers = 1,
         loss = MQLoss(level = levels),
-        max_steps = 100,
-        futr_exog_list = ['event'],
+        max_steps = 50,
+        futr_exog_list = ['promo'],
         random_seed = 0,
         alias = 'Autoformer_exog'
     ),
@@ -1154,7 +1081,7 @@ models_tformer = [
         encoder_layers = 2,
         decoder_layers = 1,
         loss = MQLoss(level = levels),
-        max_steps = 100,
+        max_steps = 50,
         random_seed = 0,
         alias = 'Informer'
     ),
@@ -1167,8 +1094,8 @@ models_tformer = [
         encoder_layers = 2,
         decoder_layers = 1,
         loss = MQLoss(level = levels),
-        max_steps = 100,
-        futr_exog_list = ['event'],
+        max_steps = 50,
+        futr_exog_list = ['promo'],
         random_seed = 0,
         alias = 'Informer_exog'
     ),
@@ -1185,7 +1112,7 @@ models_tformer = [
         mode_select = 'random',
         # MovingAvg_window = 30,
         loss = MQLoss(level = levels),
-        max_steps = 100,
+        max_steps = 50,
         random_seed = 0,
         alias = 'FEDformer'
     ),
@@ -1202,8 +1129,8 @@ models_tformer = [
         mode_select = 'random',
         # MovingAvg_window = 30,
         loss = MQLoss(level = levels),
-        max_steps = 100,
-        futr_exog_list = ['event'],
+        max_steps = 50,
+        futr_exog_list = ['promo'],
         random_seed = 0,
         alias = 'FEDformer_exog'
     ),
@@ -1213,7 +1140,7 @@ models_tformer = [
         hidden_size = 128,
         n_head = 2,
         loss = MQLoss(level = levels),
-        max_steps = 100,
+        max_steps = 50,
         random_seed = 0,
         alias = 'TFT'
     ),
@@ -1223,9 +1150,9 @@ models_tformer = [
         hidden_size = 128,
         n_head = 2,
         loss = MQLoss(level = levels),
-        max_steps = 100,
-        futr_exog_list = ['event'],
-        hist_exog_list = ['event'],
+        max_steps = 50,
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0,
         alias = 'TFT_exog'
     ),
@@ -1238,53 +1165,18 @@ models_tformer = [
         stride = 30,
         revin = False,
         loss = MQLoss(level = levels),
-        max_steps = 100,
+        max_steps = 50,
         random_seed = 0,
         alias = 'PatchTST'
-    ),
-    # ATTENTION: iTransformer cannot be trained on MQLoss
-    # iTransformer(
-    #     h = horizon,
-    #     input_size = 56,
-    #     n_series = 1,
-    #     hidden_size = 128,
-    #     n_heads = 2,
-    #     e_layers = 2,
-    #     d_layers = 1,
-    #     d_ff = 4,
-    #     loss = MSE(),
-    #     max_steps = 100,
-    #     random_seed = 0,
-    #     alias = 'iTransformer'
-    # ),
-    # iTransformer(
-    #     h = horizon,
-    #     input_size = 56,
-    #     n_series = 1,
-    #     hidden_size = 128,
-    #     n_heads = 2,
-    #     e_layers = 2,
-    #     d_layers = 1,
-    #     d_ff = 4,
-    #     loss = MSE(),
-    #     futr_exog_list = ['event'],
-    #     hist_exog_list = ['event'],
-    #     max_steps = 100,
-    #     random_seed = 0,
-    #     alias = 'iTransformer_exog'
-    # )
+    )
 ]
+nf_tformer = NeuralForecast(models = models_tformer, freq = '1d')
 
-nf_tformer = NeuralForecast(
-    models = models_tformer,
-    freq = 'D'
-)
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_tformer = pex.calibrate_evaluate_plot(
-    object = nf_tformer, data = y_xregs_df.dropna(), 
-    h = horizon, level = levels, loss = 'MQLoss',
+cv_res_tformer = calibrate_evaluate_plot(
+    nf_tformer, df = y_xregs_df, h = horizon, loss = 'MQLoss',
     engine = 'plotly', max_insample_length = horizon * 2  
 )
 cv_res_tformer['cv_results']
@@ -1295,17 +1187,8 @@ cv_res_tformer['plot'].show()
 
 # DL Models' Performance Comparison ---------------------------------------
 
-from neuralforecast.models import (
-    MLP,
-    RNN,
-    DilatedRNN,
-    GRU,
-    KAN,
-    TCN,
-    NBEATSx,
-    NHITS,
-    TFT
-)
+from neuralforecast.models import (MLP, RNN, GRU, KAN, TCN, NBEATSx, NHITS, TFT)
+
 
 # * Engines ---------------------------------------------------------------
 
@@ -1315,10 +1198,10 @@ models_ts = [
         input_size = 14,
         num_layers = 2,
         hidden_size = 128,
-        max_steps = 300,
+        max_steps = 100,
         loss = MQLoss(level = levels),
-        futr_exog_list = ['y_lag_56', 'event'],
-        hist_exog_list = ['y_lag_56', 'event'],
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0
     ),
     RNN(
@@ -1330,10 +1213,10 @@ models_ts = [
         encoder_activation = 'relu',
         decoder_layers = 2,
         decoder_hidden_size = 128,
-        max_steps = 300,
+        max_steps = 100,
         loss = MQLoss(level = levels),
-        futr_exog_list = ['y_lag_56', 'event'],
-        hist_exog_list = ['y_lag_56', 'event'],
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0               
     ),
     DilatedRNN(
@@ -1343,10 +1226,10 @@ models_ts = [
         cell_type = 'RNN',
         encoder_hidden_size = 128,
         decoder_hidden_size = 128,
-        max_steps = 300,
+        max_steps = 100,
         loss = MQLoss(level = levels),
-        futr_exog_list = ['y_lag_56', 'event'],
-        hist_exog_list = ['y_lag_56', 'event'],
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0               
     ),
     GRU(
@@ -1358,10 +1241,10 @@ models_ts = [
         encoder_activation = 'relu',
         decoder_layers = 2,
         decoder_hidden_size = 128,
-        max_steps = 300,
+        max_steps = 100,
         loss = MQLoss(level = levels),
-        futr_exog_list = ['y_lag_56', 'event'],
-        hist_exog_list = ['y_lag_56', 'event'],
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0 
     ),
     KAN(
@@ -1369,10 +1252,10 @@ models_ts = [
         input_size = 30,
         hidden_size = 128,
         n_hidden_layers = 2,
-        max_steps = 300,
+        max_steps = 100,
         loss = MQLoss(level = levels),
-        futr_exog_list = ['y_lag_56', 'event'],
-        hist_exog_list = ['y_lag_56', 'event'],
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0
     ),
     TCN(
@@ -1386,8 +1269,8 @@ models_ts = [
         decoder_hidden_size = 128,
         max_steps = 100,
         loss = MQLoss(level = levels),
-        futr_exog_list = ['y_lag_56', 'event'],
-        hist_exog_list = ['y_lag_56', 'event'],
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0                
     ),
     NBEATSx(
@@ -1395,9 +1278,9 @@ models_ts = [
         input_size = 30,
         stack_types = ['identity', 'trend', 'seasonality'],
         loss = MQLoss(level = levels),
-        max_steps = 300,
-        futr_exog_list = ['y_lag_56', 'event'],
-        hist_exog_list = ['y_lag_56', 'event'],
+        max_steps = 100,
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0
     ), 
     NHITS(
@@ -1405,9 +1288,9 @@ models_ts = [
         input_size = 30,
         n_freq_downsample = [2, 1, 1],
         loss = MQLoss(level = levels),
-        max_steps = 300,
-        futr_exog_list = ['y_lag_56', 'event'],
-        hist_exog_list = ['y_lag_56', 'event'],
+        max_steps = 100,
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0
     ),
     TFT(
@@ -1417,61 +1300,52 @@ models_ts = [
         n_head = 2,
         loss = MQLoss(level = levels),
         max_steps = 100,
-        futr_exog_list = ['event'],
-        hist_exog_list = ['event'],
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0
     )
 ]
+nf_ts = NeuralForecast(models = models_ts, freq = '1d')
 
-nf_ts = NeuralForecast(
-    models = models_ts,
-    freq = 'D'
-)
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_ts = pex.calibrate_evaluate_plot(
-    object = nf_ts, data = y_xregs_df.dropna(),
-    h = horizon, level = levels, loss = 'MQLoss',
+cv_res_ts = calibrate_evaluate_plot(
+    nf_ts, df = y_xregs_df, h = horizon, loss = 'MQLoss',
     engine = 'plotly', max_insample_length = horizon * 2  
 )
 cv_res_ts['cv_results']
-cv_res_ts['accuracy_table'].print_accuracy_table('min')
+print_accuracy_table(cv_res_ts['accuracy_table'], 'min')
 cv_res_ts['plot'].show()
+
 
 # * Refitting & Forecasting -----------------------------------------------
 
-nf_ts.fit(df = y_xregs_df.dropna())
+nf_ts.fit(df = y_xregs_df)
 preds_df_ts = nf_ts.predict(futr_df = forecast_df) \
-    .rename(columns = lambda x: re.sub('-median', '', x))
+    .rename(lambda x: re.sub('-median', '', x))
 
 plot_series(
-    y_xregs_df, preds_df_ts,
-    max_insample_length = horizon * 2,
-    level = levels,
-    engine = 'plotly'
+    y_xregs_df, preds_df_ts, max_insample_length = horizon * 2, engine = 'plotly'
 ).show()
+
 
 # * Select Best Model -----------------------------------------------------
 
-preds_best_df = preds_df_ts \
-    .get_best_model_forecast(cv_res_ts['accuracy_table'], 'rmse')
+preds_best_df = get_best_model_forecast(preds_df_ts, cv_res_ts['accuracy_table'], 'rmse')
 plot_series(
-    y_xregs_df, preds_best_df,
-    max_insample_length = horizon * 2,
-    level = levels,
-    engine = 'plotly'
+    y_xregs_df, preds_best_df, level = levels,
+    max_insample_length = horizon * 2, engine = 'plotly'
 ).show()
+
 
 # * Back-transform --------------------------------------------------------
 
-data_back_dict = pex.back_transform_data(y_xregs_df, params, preds_df_ts)
+back_df = back_transform_data(y_xregs_df, params)
+back_fcst_best_df = back_transform_forecasts(preds_best_df, params)
 plot_series(
-    data_back_dict['data_back'], 
-    data_back_dict['forecasts_back'], 
-    max_insample_length = horizon * 2,
-    level = levels,
-    engine = 'plotly', 
+    back_df, back_fcst_best_df, level = levels,
+    max_insample_length = horizon * 3, engine = 'plotly'
 ).show()
 
 
@@ -1486,52 +1360,3 @@ plot_series(
 #   - Does not always factor with external regressors
 #     - Solution 1: Run DL without. Run ML on the Residuals.
 #     - Solution 2: Create an Ensemble with ML & DL
-
-
-
-# # XX ---------------------------------------------------------------------
-
-# # Multi Layer Elman RNN (RNN), with MLP decoder. The network has tanh or 
-# # relu non-linearities, it is trained using ADAM stochastic gradient 
-# # descent. The network accepts static, historic and future exogenous data.
-
-# # https://nixtlaverse.nixtla.io/neuralforecast/models.rnn.html
-
-# from neuralforecast.models import XX
-
-# # * Engines ---------------------------------------------------------------
-
-# models_xx = [
-
-# ]
-
-# nf_xx = NeuralForecast(
-#     models = models_xx,
-#     freq = 'D'
-# )
-
-# # * Evaluation ------------------------------------------------------------
-
-# cv_res_xx = pex.calibrate_evaluate_plot(
-#     object = nf_xx, data = y_xregs_df.dropna(), 
-#     h = horizon, level = levels, loss = 'MQLoss',
-#     engine = 'plotly', max_insample_length = horizon * 2  
-# )
-# cv_res_xx['cv_results']
-# cv_res_xx['accuracy_table']
-# cv_res_xx['plot'].show()
-
-# # * Refitting & Forecasting -----------------------------------------------
-
-# nf_xx.fit(df = y_xregs_df.dropna()) 
-
-# preds_df_xx = nf_xx.predict(futr_df = forecast_df) \
-#     .rename(columns = lambda x: re.sub('-median', '', x))
-# preds_df_xx
-
-# plot_series(
-#     data_prep_df, preds_df_xx,
-#     max_insample_length = horizon * 2,
-#     level = levels,
-#     engine = 'plotly'
-# ).show()

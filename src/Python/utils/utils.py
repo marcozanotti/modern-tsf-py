@@ -174,8 +174,15 @@ def calibrate_evaluate_plot(
             static_features = []
         )
     elif object_class == "<class 'neuralforecast.core.NeuralForecast'>":
+        # prediction intervals can be passed to cross_validation but refit = True
+        if prediction_intervals is not None:
+            refit = True
+        else: 
+            refit = False
         cv_res = object.cross_validation(
-            df = df, n_windows = 1
+            df = df, h = h, n_windows = 1,
+            prediction_intervals = prediction_intervals, 
+            level = level, refit = refit
         )
     else:
         raise Exception(f"Unknown object of class {object_class}")
@@ -183,16 +190,20 @@ def calibrate_evaluate_plot(
     if isinstance(cv_res, pd.DataFrame):
         
         if loss == 'DistributionLoss':
-            cv_res = cv_res \
-                .loc[:, ~ cv_res.columns.str.endswith('-median')]
+            cv_res = cv_res.loc[:, ~ cv_res.columns.str.endswith('-median')]
         elif loss == 'MQLoss':
             # remove -median when using MQLoss in DL
-            cv_res = cv_res \
-                .rename(columns = lambda x: re.sub('-median', '', x))
+            cv_res = cv_res.rename(columns = lambda x: re.sub('-median', '', x))
         
         cv_res_no_cutoff = cv_res.drop('cutoff', axis = 1)
     
     else:
+
+        if loss == 'DistributionLoss':
+            cv_res = cv_res.select(pl.exclude(r'^.*-median$'))
+        elif loss == 'MQLoss':
+            # remove -median when using MQLoss in DL
+            cv_res = cv_res.rename(lambda x: re.sub('-median', '', x))
 
         cv_res_no_cutoff = cv_res.drop('cutoff')
     
