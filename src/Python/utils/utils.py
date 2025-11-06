@@ -180,19 +180,25 @@ def calibrate_evaluate_plot(
     else:
         raise Exception(f"Unknown object of class {object_class}")
     
-    # FIXME: correct to work with polars
-    if loss == 'DistributionLoss':
-        cv_res = cv_res \
-            .loc[:, ~ cv_res.columns.str.endswith('-median')]
-    elif loss == 'MQLoss':
-        # remove -median when using MQLoss in DL
-        cv_res = cv_res \
-            .rename(columns = lambda x: re.sub('-median', '', x))
-    else:
-        cv_res = cv_res
+    if isinstance(cv_res, pd.DataFrame):
+        
+        if loss == 'DistributionLoss':
+            cv_res = cv_res \
+                .loc[:, ~ cv_res.columns.str.endswith('-median')]
+        elif loss == 'MQLoss':
+            # remove -median when using MQLoss in DL
+            cv_res = cv_res \
+                .rename(columns = lambda x: re.sub('-median', '', x))
+        
+        cv_res_no_cutoff = cv_res.drop('cutoff', axis = 1)
     
+    else:
+
+        cv_res_no_cutoff = cv_res.drop('cutoff')
+    
+
     acc_res = evaluate(
-        df = cv_res.drop('cutoff'),
+        df = cv_res_no_cutoff,
         train_df = df,
         metrics = [bias, mae, mape, mse, rmse],
         agg_fn = 'mean'
@@ -204,14 +210,14 @@ def calibrate_evaluate_plot(
     if level is None:
         p_res = plot_series(
             df = df.head(n = -h),
-            forecasts_df = cv_res.drop('cutoff'),
+            forecasts_df = cv_res_no_cutoff,
             max_insample_length = max_insample_length,
             engine = engine
         )
     else:
         p_res = plot_series(
             df = df.head(n = -h),
-            forecasts_df = cv_res.drop('cutoff'),
+            forecasts_df = cv_res_no_cutoff,
             level = level,  
             max_insample_length = max_insample_length,
             engine = engine
@@ -223,7 +229,10 @@ def calibrate_evaluate_plot(
 
 # function to print accuracy table
 def print_accuracy_table(df, type = 'min'):
-    df = df.to_pandas()
+    
+    if not isinstance(df, pd.DataFrame):
+        df = df.to_pandas()
+    
     if type == 'min':
         data_res = df \
             .set_index('metric') \
@@ -246,6 +255,10 @@ def select_columns(df, regex = None):
 
 # function to select the best model from accuracy table
 def get_best_model_name(accuracy_df, metric = 'rmse'):
+
+    if isinstance(accuracy_df, pd.DataFrame):
+        accuracy_df = pl.from_pandas(accuracy_df)
+
     model_name = accuracy_df \
         .melt(id_vars = 'metric') \
         .filter(pl.col('metric') == metric) \
@@ -262,6 +275,9 @@ def get_best_model_forecast(forecasts_data, accuracy_data, metric = 'rmse'):
 
 # function to back transform results
 def back_transform_data(df, params, col = 'y'):
+
+    if isinstance(df, pd.DataFrame):
+        df = pl.from_pandas(df)
 
     back_df = df \
         .with_columns(
@@ -284,6 +300,9 @@ def back_transform_data(df, params, col = 'y'):
 
 # function to back transform forecast results
 def back_transform_forecasts(df, params):
+
+    if isinstance(df, pd.DataFrame):
+        df = pl.from_pandas(df)
 
     cols_to_transform = df.drop('unique_id', 'ds').columns
     back_df = df

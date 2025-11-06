@@ -43,6 +43,9 @@ forecast_df = data_loaded['forecast_df']
 feature_sets = data_loaded['feature_sets']
 params = data_loaded['transform_params']
 
+
+# * Recipes ---------------------------------------------------------------
+
 # classical time series models just need the target variable and date
 # so we select only those columns and the promo variable as external regressor
 y_df = select_columns(data_prep_df)
@@ -54,7 +57,6 @@ forecast_xregs_df = select_columns(forecast_df, '(promo)').drop('y')
 y_df.tk.plot_timeseries('ds', 'y', smooth = False)
 
 
-
 # * Forecast Horizon ------------------------------------------------------
 
 horizon = 7 * 8 # 8 weeks
@@ -63,7 +65,6 @@ horizon = 7 * 8 # 8 weeks
 # * Prediction Intervals --------------------------------------------------
 
 levels = [80, 95]
-# Conformal intervals
 intervals = ConformalIntervals(h = horizon, n_windows = 2)
 # P.S. n_windows*h should be less than the count of data elements in your time series sequence.
 # P.S. Also value of n_windows should be atleast 2 or more.
@@ -76,15 +77,9 @@ intervals = ConformalIntervals(h = horizon, n_windows = 2)
 # however it is always useful to visualize the validation plan 
 # for that one can just cross-validate a naive model to obtain the 
 # validation plan (cutoffs dates)
-plot_cross_validation_plan(
-    y_df, freq = '1d', h = horizon, 
-    n_windows = 1, step_size = 1
-)
+plot_cross_validation_plan(y_df, freq = '1d', h = horizon, n_windows = 1, step_size = 1)
 
-plot_cross_validation_plan(
-    y_df, freq = '1d', h = horizon, 
-    n_windows = 6, step_size = 14
-)
+plot_cross_validation_plan(y_df, freq = '1d', h = horizon, n_windows = 6, step_size = 14)
 
 
 
@@ -548,33 +543,3 @@ sf_ts.plot(
     engine = 'plotly', 
     level = levels
 ).show()
-
-
-
-# # XX ------------------------------------------------------
-
-# from statsforecast.models import (
-    
-# )
-
-# # * Engines ---------------------------------------------------------------
-
-# models_xx = [
-    
-# ]
-# sf_xx = StatsForecast(
-#     models = models_xx,
-#     freq = '1d', 
-#     n_jobs = -1,
-# )
-
-# # * Evaluation ------------------------------------------------------------
-
-# cv_res_xx = pex.calibrate_evaluate_plot(
-#     class_object = sf_xx, data = data_prep_df, 
-#     h = horizon, prediction_intervals = intervals, level = levels,
-#     engine = 'plotly', max_insample_length = horizon * 2  
-# )
-# cv_res_xx['cv_results']
-# cv_res_xx['accuracy_table']
-# cv_res_xx['plot'].show()

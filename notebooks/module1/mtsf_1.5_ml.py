@@ -21,106 +21,63 @@
 
 # Packages ----------------------------------------------------------------
 
-import os
 import pickle
-
-import numpy as np
-import pandas as pd
-import random
-# import polars as pl
+import sys
+sys.path.insert(0, 'src/Python/utils')
+from utils import (
+    plot_cross_validation_plan, select_columns, calibrate_evaluate_plot,
+    print_accuracy_table, get_best_model_forecast, 
+    back_transform_data, back_transform_forecasts
+)
 import pytimetk as tk
 
 from mlforecast import MLForecast
-from mlforecast.lag_transforms import (
-    RollingMean, SeasonalRollingMean, 
-    ExponentiallyWeightedMean, ExpandingMean
-)
-from mlforecast.target_transforms import LocalBoxCox, LocalStandardScaler
 from mlforecast.utils import PredictionIntervals
-from statsforecast import StatsForecast
-from statsforecast.utils import ConformalIntervals
-
-from utilsforecast.evaluation import evaluate
-from utilsforecast.losses import bias, mae, mape, mse, rmse
 from utilsforecast.plotting import plot_series
-
-import python_extensions as pex
-
-pd.set_option("display.max_rows", 3)
-os.environ['NIXTLA_ID_AS_COL'] = '1'
 
 
 
 # Data & Artifacts --------------------------------------------------------
 
-with open('artifacts/Python/feature_engineering_artifacts_list.pkl', 'rb') as f:
+with open('data/email/artifacts/feature_engineering_artifacts_list.pkl', 'rb') as f:
     data_loaded = pickle.load(f)
 data_prep_df = data_loaded['data_prep_df']
 forecast_df = data_loaded['forecast_df']
 feature_sets = data_loaded['feature_sets']
 params = data_loaded['transform_params']
 
-plot_series(data_prep_df).show()
+
+# * Recipes ---------------------------------------------------------------
+
+# in ML modeling we can test various feature sets
+y_df = select_columns(data_prep_df)
+y_base_df = data_prep_df.select(feature_sets['base'])
+y_wave_df = data_prep_df.select(feature_sets['wave'])
+y_lag_df = data_prep_df.select(feature_sets['lag']).drop_nulls()
+
+forecast_y_df = select_columns(forecast_df).drop('y')
+forecast_y_base_df = forecast_df.select(feature_sets['base']).drop('y')
+forecast_y_wave_df = forecast_df.select(feature_sets['wave']).drop('y')
+forecast_y_lag_df = forecast_df.select(feature_sets['lag']).drop('y')
+
+y_df.tk.plot_timeseries('ds', 'y', smooth = False)
+
 
 # * Forecast Horizon ------------------------------------------------------
 horizon = 7 * 8 # 8 weeks
 
+
 # * Prediction Intervals --------------------------------------------------
 
 levels = [80, 95]
-# Conformal intervals
-# method can be conformal_distribution or conformal_error; 
-# conformal_distribution (default) creates forecasts paths based on 
-# the cross-validation errors and calculate quantiles using those paths, 
-# on the other hand conformal_error calculates the error quantiles to 
-# produce prediction intervals. The strategy will adjust the intervals 
-# for each horizon step, resulting in different widths for each step. 
-# Please note that a minimum of 2 cross-validation windows must be used.
-intervals = ConformalIntervals(h = horizon, n_windows = 2, method = 'conformal_distribution')
-# or
-# intervals = PredictionIntervals(h = horizon, n_windows = 2, method = 'conformal_distribution')
-
+intervals = PredictionIntervals(h = horizon, n_windows = 2)
 # P.S. n_windows*h should be less than the count of data elements in your time series sequence.
 # P.S. Also value of n_windows should be atleast 2 or more.
 
+
 # * Cross-validation Plan -------------------------------------------------
 
-pex.plot_cross_validation_plan(
-    data_prep_df, freq = 'D', h = horizon, 
-    n_windows = 1, step_size = 1, 
-    engine = 'matplotlib'
-)
-
-# * External Regressors ---------------------------------------------------
-
-# back-transform the y to use mlforecast full workflow
-# but results are not directly comparable to those of TS because 
-# the predictions are automatically back-transformed
-# y_df = data_prep_df \
-#     .select_columns() \
-#     .back_transform_data(params = params)
-# y_xregs_df = data_prep_df \
-#     .select_columns(
-#         regex = '(event)|(holiday)|(inter_)|(ds_mweek_2)|(_sin_)|(_cos_)'
-#     ) \
-#     .back_transform_data(params = params)
-y_df = data_prep_df.select_columns()
-y_xregs_df = data_prep_df.select_columns('(event)|(holiday)|(inter_)|(ds_)')
-
-
-# * Transformations -------------------------------------------------------
-
-# Target trasforms
-# Log1p transformation
-from sklearn.preprocessing import FunctionTransformer
-from mlforecast.target_transforms import GlobalSklearnTransformer
-Log1p = FunctionTransformer(func = np.log1p, inverse_func = np.expm1)
-Log1p = GlobalSklearnTransformer(Log1p)
-
-# Date features
-def is_weekend(ds):
-    """Date is weekend"""
-    return any([ds.dayofweek == 5, ds.dayofweek == 6])
+plot_cross_validation_plan(y_df, freq = '1d', h = horizon, n_windows = 1, step_size = 1)
 
 
 
@@ -129,93 +86,55 @@ def is_weekend(ds):
 # - Baseline model for ML
 from sklearn.linear_model import LinearRegression
 
+
 # * Engines ---------------------------------------------------------------
 
-models_lr = [
-    LinearRegression()
-]
+models_lr = [LinearRegression()]
+mlf_lr = MLForecast(models = models_lr, freq = '1d', num_threads = 1)
 
-# * Recipe ----------------------------------------------------------------
-
-# the advantage of generating lags and lag_transforms through MLForecast
-# API is that the model is automatically fitted in a recursive way hence 
-# one can use lags of order lower than the forecast horizon.
-# Keep in mind that the recursive strategy suffers from error accumulation. 
-
-mlf_lr = MLForecast(
-    models = models_lr,
-    freq = 'D', 
-    num_threads = 1,
-    # target_transforms = [Log1p, LocalStandardScaler()], # test with original y
-    lags = [7, 14, 30, 56],
-    lag_transforms = {
-        7: [
-            RollingMean(window_size = 7),
-            ExpandingMean()
-        ],
-        14: [
-            RollingMean(window_size = 14)            
-        ],
-        56: [
-            RollingMean(window_size = 30),
-            RollingMean(window_size = 60), 
-            RollingMean(window_size = 90),
-            ExponentiallyWeightedMean(alpha = 0.3)
-        ]
-    },
-    # date_features = [
-    #     'year', 'quarter', 'month', 'week', 
-    #     'day', 'dayofyear', 'dayofweek', is_weekend
-    # ]
-)
-mlf_lr.preprocess(y_xregs_df, static_features = [])
 
 # * Evaluation ------------------------------------------------------------
 
-# test with different feature sets to see the effects of the features
-# data_prep_df[feature_sets['base']]
-# data_prep_df[feature_sets['spline']]
-# data_prep_df[feature_sets['lag']]
-# mlf_lr = MLForecast(
-#     models = models_lr,
-#     freq = 'D', 
-#     num_threads = 1
-# )
-# cv_res_lr = pex.calibrate_evaluate_plot(
-#     mlf_lr, data = data_prep_df[feature_sets['lag']].dropna(), 
-#     h = horizon, prediction_intervals = intervals, level = levels,
-#     engine = 'plotly', max_insample_length = horizon * 2  
-# )
-
-cv_res_lr = pex.calibrate_evaluate_plot(
-    mlf_lr, data = y_xregs_df, 
-    h = horizon, prediction_intervals = intervals, level = levels,
-    engine = 'plotly', max_insample_length = horizon * 2  
+cv_res_lr_base = calibrate_evaluate_plot(
+    mlf_lr, df = y_base_df, h = horizon, 
+    prediction_intervals = intervals, level = levels,
+    max_insample_length = horizon * 3  
 )
-cv_res_lr['cv_results']
-cv_res_lr['accuracy_table']
-cv_res_lr['plot'].show()
+cv_res_lr_base['cv_results']
+cv_res_lr_base['accuracy_table']
+cv_res_lr_base['plot'].show()
+
+cv_res_lr_wave = calibrate_evaluate_plot(
+    mlf_lr, df = y_wave_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_lr_wave['cv_results']
+cv_res_lr_wave['accuracy_table']
+cv_res_lr_wave['plot'].show()
+
+cv_res_lr_lag = calibrate_evaluate_plot(
+    mlf_lr, df = y_lag_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_lr_lag['cv_results']
+cv_res_lr_lag['accuracy_table']
+cv_res_lr_lag['plot'].show()
+
 
 # * Refitting & Forecasting -----------------------------------------------
 
-fit_lr = mlf_lr.fit(
-    df = y_xregs_df, 
-    prediction_intervals = intervals,
-    static_features = []
-)
+fit_lr = mlf_lr.fit(df = y_base_df, prediction_intervals = intervals, static_features = [])
 fit_lr.models_['LinearRegression'].intercept_
 fit_lr.models_['LinearRegression'].coef_
 
-preds_df_lr = fit_lr.predict(
-    h = horizon, level = levels, X_df = forecast_df.drop('y', axis = 1)
-)
+preds_df_lr = fit_lr.predict(h = horizon, level = levels, X_df = forecast_y_base_df)
 preds_df_lr
 
 plot_series(
-    data_prep_df, preds_df_lr,
-    max_insample_length = horizon * 2,
-    level = levels,
-    engine = 'plotly'
+    y_base_df, preds_df_lr, level = levels,
+    max_insample_length = horizon * 3, engine = 'plotly'
 ).show()
 
 
@@ -230,44 +149,39 @@ from sklearn.linear_model import Lasso, Ridge, ElasticNet
 
 models_elanet = [
     Ridge(),
-    Lasso(),
-    ElasticNet(l1_ratio = 0.5)    
+    Lasso(alpha = 0.01),
+    ElasticNet(l1_ratio = 0.5, alpha = 0.01)    
 ]
-
-# * Recipe ----------------------------------------------------------------
-
-mlf_elanet = MLForecast(
-    models = models_elanet,
-    freq = 'D', 
-    num_threads = 1,
-    lags = [7, 14, 30, 56],
-    lag_transforms = {
-        7: [
-            RollingMean(window_size = 7),
-            ExpandingMean()
-        ],
-        14: [
-            RollingMean(window_size = 14)            
-        ],
-        56: [
-            RollingMean(window_size = 30),
-            RollingMean(window_size = 60), 
-            RollingMean(window_size = 90),
-            ExponentiallyWeightedMean(alpha = 0.3)
-        ]
-    }
-)
+mlf_elanet = MLForecast(models = models_elanet, freq = '1d', num_threads = 1)
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_elanet = pex.calibrate_evaluate_plot(
-    mlf_elanet, data = y_xregs_df, 
-    h = horizon, prediction_intervals = intervals, level = levels,
-    engine = 'plotly', max_insample_length = horizon * 2  
+cv_res_elanet_base = calibrate_evaluate_plot(
+    mlf_elanet, df = y_base_df, h = horizon, 
+    prediction_intervals = intervals, level = levels,
+    max_insample_length = horizon * 3  
 )
-cv_res_elanet['cv_results']
-cv_res_elanet['accuracy_table']
-cv_res_elanet['plot'].show()
+cv_res_elanet_base['cv_results']
+cv_res_elanet_base['accuracy_table']
+cv_res_elanet_base['plot'].show()
+
+cv_res_elanet_wave = calibrate_evaluate_plot(
+    mlf_elanet, df = y_wave_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_elanet_wave['cv_results']
+cv_res_elanet_wave['accuracy_table']
+cv_res_elanet_wave['plot'].show()
+
+cv_res_elanet_lag = calibrate_evaluate_plot(
+    mlf_elanet, df = y_lag_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_elanet_lag['cv_results']
+cv_res_elanet_lag['accuracy_table']
+cv_res_elanet_lag['plot'].show()
 
 
 
@@ -280,49 +194,46 @@ cv_res_elanet['plot'].show()
 #   - Not good for complex patterns (i.e. seasonality)
 #   - Don't combine with splines! MARS makes splines.
 
+# FIXME: installation error and archived repo, you need to use Python 3.6
+# https://github.com/scikit-learn-contrib/py-earth
 # pip install sklearn-contrib-py-earth
 from pyearth import Earth
 
+
 # * Engines ---------------------------------------------------------------
 
-models_mars = [
-    Earth()
-]
+models_mars = [Earth()]
+mlf_mars = MLForecast(models = models_mars, freq = '1d', num_threads = 1)
 
-# * Recipe ----------------------------------------------------------------
-
-mlf_mars = MLForecast(
-    models = models_mars,
-    freq = 'D', 
-    num_threads = 1,
-    lags = [7, 14, 30, 56],
-    lag_transforms = {
-        7: [
-            RollingMean(window_size = 7),
-            ExpandingMean()
-        ],
-        14: [
-            RollingMean(window_size = 14)            
-        ],
-        56: [
-            RollingMean(window_size = 30),
-            RollingMean(window_size = 60), 
-            RollingMean(window_size = 90),
-            ExponentiallyWeightedMean(alpha = 0.3)
-        ]
-    }
-)
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_mars = pex.calibrate_evaluate_plot(
-    mlf_mars, data = y_xregs_df, 
-    h = horizon, prediction_intervals = intervals, level = levels,
-    engine = 'plotly', max_insample_length = horizon * 2  
+cv_res_mars_base = calibrate_evaluate_plot(
+    mlf_mars, df = y_base_df, h = horizon, 
+    prediction_intervals = intervals, level = levels,
+    max_insample_length = horizon * 3  
 )
-cv_res_mars['cv_results']
-cv_res_mars['accuracy_table']
-cv_res_mars['plot'].show()
+cv_res_mars_base['cv_results']
+cv_res_mars_base['accuracy_table']
+cv_res_mars_base['plot'].show()
+
+cv_res_mars_wave = calibrate_evaluate_plot(
+    mlf_mars, df = y_wave_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_mars_wave['cv_results']
+cv_res_mars_wave['accuracy_table']
+cv_res_mars_wave['plot'].show()
+
+cv_res_mars_lag = calibrate_evaluate_plot(
+    mlf_mars, df = y_lag_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_mars_lag['cv_results']
+cv_res_mars_lag['accuracy_table']
+cv_res_mars_lag['plot'].show()
 
 
 
@@ -336,48 +247,45 @@ cv_res_mars['plot'].show()
 # - Weaknesses: Not as good for complex patterns (i.e. seasonality)
 from sklearn.svm import SVR
 
+
 # * Engines ---------------------------------------------------------------
 
 models_svm = [
-    # SVR(kernel = 'linear'), # too slow !!!!!!!!!!!!!!!!!!!!
-    # SVR(kernel = 'poly'), # too slow !!!!!!!!!!!!!!!!!!!!
+    # SVR(kernel = 'linear'), # very slow !!!!!!
+    # SVR(kernel = 'poly'), # very slow !!!!!!
     SVR(kernel = 'rbf')
 ]
+mlf_svm = MLForecast(models = models_svm, freq = '1d', num_threads = 1)
 
-# * Recipe ----------------------------------------------------------------
-
-mlf_svm = MLForecast(
-    models = models_svm,
-    freq = 'D', 
-    num_threads = 1,
-    lags = [7, 14, 30, 56],
-    lag_transforms = {
-        7: [
-            RollingMean(window_size = 7),
-            ExpandingMean()
-        ],
-        14: [
-            RollingMean(window_size = 14)            
-        ],
-        56: [
-            RollingMean(window_size = 30),
-            RollingMean(window_size = 60), 
-            RollingMean(window_size = 90),
-            ExponentiallyWeightedMean(alpha = 0.3)
-        ]
-    }
-)
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_svm = pex.calibrate_evaluate_plot(
-    mlf_svm, data = y_xregs_df,
-    h = horizon, prediction_intervals = intervals, level = levels,
-    engine = 'plotly', max_insample_length = horizon * 2  
+cv_res_svm_base = calibrate_evaluate_plot(
+    mlf_svm, df = y_base_df, h = horizon, 
+    prediction_intervals = intervals, level = levels,
+    max_insample_length = horizon * 3  
 )
-cv_res_svm['cv_results']
-cv_res_svm['accuracy_table']
-cv_res_svm['plot'].show()
+cv_res_svm_base['cv_results']
+cv_res_svm_base['accuracy_table']
+cv_res_svm_base['plot'].show()
+
+cv_res_svm_wave = calibrate_evaluate_plot(
+    mlf_svm, df = y_wave_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_svm_wave['cv_results']
+cv_res_svm_wave['accuracy_table']
+cv_res_svm_wave['plot'].show()
+
+cv_res_svm_lag = calibrate_evaluate_plot(
+    mlf_svm, df = y_lag_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_svm_lag['cv_results']
+cv_res_svm_lag['accuracy_table']
+cv_res_svm_lag['plot'].show()
 
 
 
@@ -388,49 +296,43 @@ cv_res_svm['plot'].show()
 # - Strengths: Uses neighboring points to estimate
 # - Weaknesses: Cannot predict beyond the maximum/minimum target (e.g. increasing trend)
 # - Solution: Model trend separately (if needed).
-#   - Can combine with ARIMA, Linear Regression, Mars, or Prophet
+#   - Can combine with ARIMA, Linear Regression, knn, or Prophet
 from sklearn.neighbors import KNeighborsRegressor
 
 # * Engines ---------------------------------------------------------------
 
-models_knn = [
-    KNeighborsRegressor(n_neighbors = 15)
-]
+models_knn = [KNeighborsRegressor(n_neighbors = 30)]
+mlf_knn = MLForecast(models = models_knn, freq = '1d', num_threads = 1)
 
-# * Recipe ----------------------------------------------------------------
-
-mlf_knn = MLForecast(
-    models = models_knn,
-    freq = 'D', 
-    num_threads = 1,
-    lags = [7, 14, 30, 56],
-    lag_transforms = {
-        7: [
-            RollingMean(window_size = 7),
-            ExpandingMean()
-        ],
-        14: [
-            RollingMean(window_size = 14)            
-        ],
-        56: [
-            RollingMean(window_size = 30),
-            RollingMean(window_size = 60), 
-            RollingMean(window_size = 90),
-            ExponentiallyWeightedMean(alpha = 0.3)
-        ]
-    }
-)
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_knn = pex.calibrate_evaluate_plot(
-    mlf_knn, data = y_xregs_df, 
-    h = horizon, prediction_intervals = intervals, level = levels,
-    engine = 'plotly', max_insample_length = horizon * 2  
+cv_res_knn_base = calibrate_evaluate_plot(
+    mlf_knn, df = y_base_df, h = horizon, 
+    prediction_intervals = intervals, level = levels,
+    max_insample_length = horizon * 3  
 )
-cv_res_knn['cv_results']
-cv_res_knn['accuracy_table']
-cv_res_knn['plot'].show()
+cv_res_knn_base['cv_results']
+cv_res_knn_base['accuracy_table']
+cv_res_knn_base['plot'].show()
+
+cv_res_knn_wave = calibrate_evaluate_plot(
+    mlf_knn, df = y_wave_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_knn_wave['cv_results']
+cv_res_knn_wave['accuracy_table']
+cv_res_knn_wave['plot'].show()
+
+cv_res_knn_lag = calibrate_evaluate_plot(
+    mlf_knn, df = y_lag_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_knn_lag['cv_results']
+cv_res_knn_lag['accuracy_table']
+cv_res_knn_lag['plot'].show()
 
 
 
@@ -440,44 +342,38 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 
 # * Engines ---------------------------------------------------------------
 
-models_gp = [
-    GaussianProcessRegressor()
-]
+models_gp = [GaussianProcessRegressor()]
+mlf_gp = MLForecast(models = models_gp, freq = '1d', num_threads = 1)
 
-# * Recipe ----------------------------------------------------------------
-
-mlf_gp = MLForecast(
-    models = models_gp,
-    freq = 'D', 
-    num_threads = 1,
-    lags = [7, 14, 30, 56],
-    lag_transforms = {
-        7: [
-            RollingMean(window_size = 7),
-            ExpandingMean()
-        ],
-        14: [
-            RollingMean(window_size = 14)            
-        ],
-        56: [
-            RollingMean(window_size = 30),
-            RollingMean(window_size = 60), 
-            RollingMean(window_size = 90),
-            ExponentiallyWeightedMean(alpha = 0.3)
-        ]
-    }
-)
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_gp = pex.calibrate_evaluate_plot(
-    mlf_gp, data = y_xregs_df, 
-    h = horizon, prediction_intervals = intervals, level = levels,
-    engine = 'plotly', max_insample_length = horizon * 2  
+cv_res_gp_base = calibrate_evaluate_plot(
+    mlf_gp, df = y_base_df, h = horizon, 
+    prediction_intervals = intervals, level = levels,
+    max_insample_length = horizon * 3  
 )
-cv_res_gp['cv_results']
-cv_res_gp['accuracy_table']
-cv_res_gp['plot'].show()
+cv_res_gp_base['cv_results']
+cv_res_gp_base['accuracy_table']
+cv_res_gp_base['plot'].show()
+
+cv_res_gp_wave = calibrate_evaluate_plot(
+    mlf_gp, df = y_wave_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_gp_wave['cv_results']
+cv_res_gp_wave['accuracy_table']
+cv_res_gp_wave['plot'].show()
+
+cv_res_gp_lag = calibrate_evaluate_plot(
+    mlf_gp, df = y_lag_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_gp_lag['cv_results']
+cv_res_gp_lag['accuracy_table']
+cv_res_gp_lag['plot'].show()
 
 
 
@@ -485,6 +381,7 @@ cv_res_gp['plot'].show()
 
 # - Baseline Tree model
 from sklearn.tree import DecisionTreeRegressor
+
 
 # * Engines ---------------------------------------------------------------
 
@@ -496,41 +393,37 @@ models_tree = [
         min_samples_split = 2
     )
 ]
+mlf_tree = MLForecast(models = models_tree, freq = '1d', num_threads = 1)
 
-# * Recipe ----------------------------------------------------------------
-
-mlf_tree = MLForecast(
-    models = models_tree,
-    freq = 'D', 
-    num_threads = 1,
-    lags = [7, 14, 30, 56],
-    lag_transforms = {
-        7: [
-            RollingMean(window_size = 7),
-            ExpandingMean()
-        ],
-        14: [
-            RollingMean(window_size = 14)            
-        ],
-        56: [
-            RollingMean(window_size = 30),
-            RollingMean(window_size = 60), 
-            RollingMean(window_size = 90),
-            ExponentiallyWeightedMean(alpha = 0.3)
-        ]
-    }
-)
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_tree = pex.calibrate_evaluate_plot(
-    mlf_tree, data = y_xregs_df, 
-    h = horizon, prediction_intervals = intervals, level = levels,
-    engine = 'plotly', max_insample_length = horizon * 2  
+cv_res_tree_base = calibrate_evaluate_plot(
+    mlf_tree, df = y_base_df, h = horizon, 
+    prediction_intervals = intervals, level = levels,
+    max_insample_length = horizon * 3  
 )
-cv_res_tree['cv_results']
-cv_res_tree['accuracy_table']
-cv_res_tree['plot'].show()
+cv_res_tree_base['cv_results']
+cv_res_tree_base['accuracy_table']
+cv_res_tree_base['plot'].show()
+
+cv_res_tree_wave = calibrate_evaluate_plot(
+    mlf_tree, df = y_wave_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_tree_wave['cv_results']
+cv_res_tree_wave['accuracy_table']
+cv_res_tree_wave['plot'].show()
+
+cv_res_tree_lag = calibrate_evaluate_plot(
+    mlf_tree, df = y_lag_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_tree_lag['cv_results']
+cv_res_tree_lag['accuracy_table']
+cv_res_tree_lag['plot'].show()
 
 
 
@@ -548,8 +441,8 @@ from sklearn.ensemble import BaggingRegressor, RandomForestRegressor
 models_rf = [
     BaggingRegressor(
         n_estimators = 100,
-        max_samples = 1,
-        max_features = 1,
+        max_samples = 10,
+        max_features = 10,
         bootstrap = True,
         random_state = 0
     ),
@@ -562,41 +455,37 @@ models_rf = [
         random_state = 0
     )
 ]
+mlf_rf = MLForecast(models = models_rf, freq = '1d', num_threads = 1)
 
-# * Recipe ----------------------------------------------------------------
-
-mlf_rf = MLForecast(
-    models = models_rf,
-    freq = 'D', 
-    num_threads = 1,
-    lags = [7, 14, 30, 56],
-    lag_transforms = {
-        7: [
-            RollingMean(window_size = 7),
-            ExpandingMean()
-        ],
-        14: [
-            RollingMean(window_size = 14)            
-        ],
-        56: [
-            RollingMean(window_size = 30),
-            RollingMean(window_size = 60), 
-            RollingMean(window_size = 90),
-            ExponentiallyWeightedMean(alpha = 0.3)
-        ]
-    }
-)
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_rf = pex.calibrate_evaluate_plot(
-    mlf_rf, data = y_xregs_df, 
-    h = horizon, prediction_intervals = intervals, level = levels,
-    engine = 'plotly', max_insample_length = horizon * 2  
+cv_res_rf_base = calibrate_evaluate_plot(
+    mlf_rf, df = y_base_df, h = horizon, 
+    prediction_intervals = intervals, level = levels,
+    max_insample_length = horizon * 3  
 )
-cv_res_rf['cv_results']
-cv_res_rf['accuracy_table']
-cv_res_rf['plot'].show()
+cv_res_rf_base['cv_results']
+cv_res_rf_base['accuracy_table']
+cv_res_rf_base['plot'].show()
+
+cv_res_rf_wave = calibrate_evaluate_plot(
+    mlf_rf, df = y_wave_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_rf_wave['cv_results']
+cv_res_rf_wave['accuracy_table']
+cv_res_rf_wave['plot'].show()
+
+cv_res_rf_lag = calibrate_evaluate_plot(
+    mlf_rf, df = y_lag_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_rf_lag['cv_results']
+cv_res_rf_lag['accuracy_table']
+cv_res_rf_lag['plot'].show()
 
 
 
@@ -624,6 +513,7 @@ from sklearn.ensemble import GradientBoostingRegressor, AdaBoostRegressor
 from xgboost import XGBRegressor
 from lightgbm import LGBMRegressor
 from catboost import CatBoostRegressor
+
 
 # * Engines ---------------------------------------------------------------
 
@@ -659,41 +549,40 @@ models_boost = [
         random_state = 0
     )
 ]
+mlf_boost = MLForecast(models = models_boost, freq = '1d', num_threads = 1)
 
-# * Recipe ----------------------------------------------------------------
-
-mlf_boost = MLForecast(
-    models = models_boost,
-    freq = 'D', 
-    num_threads = 1,
-    lags = [7, 14, 30, 56],
-    lag_transforms = {
-        7: [
-            RollingMean(window_size = 7),
-            ExpandingMean()
-        ],
-        14: [
-            RollingMean(window_size = 14)            
-        ],
-        56: [
-            RollingMean(window_size = 30),
-            RollingMean(window_size = 60), 
-            RollingMean(window_size = 90),
-            ExponentiallyWeightedMean(alpha = 0.3)
-        ]
-    }
-)
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_boost = pex.calibrate_evaluate_plot(
-    mlf_boost, data = y_xregs_df, 
-    h = horizon, prediction_intervals = intervals, level = levels,
-    engine = 'plotly', max_insample_length = horizon * 2  
+# pandas data is required by CatBoost and others
+y_base_df_pd = y_base_df.to_pandas()
+
+cv_res_boost_base = calibrate_evaluate_plot(
+    mlf_boost, df = y_base_df_pd, h = horizon, 
+    prediction_intervals = intervals, level = levels,
+    max_insample_length = horizon * 3  
 )
-cv_res_boost['cv_results']
-cv_res_boost['accuracy_table']
-cv_res_boost['plot'].show()
+cv_res_boost_base['cv_results']
+cv_res_boost_base['accuracy_table']
+cv_res_boost_base['plot'].show()
+
+cv_res_boost_wave = calibrate_evaluate_plot(
+    mlf_boost, df = y_wave_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_boost_wave['cv_results']
+cv_res_boost_wave['accuracy_table']
+cv_res_boost_wave['plot'].show()
+
+cv_res_boost_lag = calibrate_evaluate_plot(
+    mlf_boost, df = y_lag_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_boost_lag['cv_results']
+cv_res_boost_lag['accuracy_table']
+cv_res_boost_lag['plot'].show()
 
 
 
@@ -703,6 +592,7 @@ cv_res_boost['plot'].show()
 # - Does better than tree-based algorithms when time series has trend
 # - Can predict beyond maximum
 from cubist import Cubist
+
 
 # * Engines ---------------------------------------------------------------
 
@@ -714,41 +604,37 @@ models_cub = [
         random_state = 0
     )
 ]
+mlf_cub = MLForecast(models = models_cub, freq = '1d', num_threads = 1)
 
-# * Recipe ----------------------------------------------------------------
-
-mlf_cub = MLForecast(
-    models = models_cub,
-    freq = 'D', 
-    num_threads = 1,
-    lags = [7, 14, 30, 56],
-    lag_transforms = {
-        7: [
-            RollingMean(window_size = 7),
-            ExpandingMean()
-        ],
-        14: [
-            RollingMean(window_size = 14)            
-        ],
-        56: [
-            RollingMean(window_size = 30),
-            RollingMean(window_size = 60), 
-            RollingMean(window_size = 90),
-            ExponentiallyWeightedMean(alpha = 0.3)
-        ]
-    }
-)
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_cub = pex.calibrate_evaluate_plot(
-    mlf_cub, data = y_xregs_df, 
-    h = horizon, prediction_intervals = intervals, level = levels,
-    engine = 'plotly', max_insample_length = horizon * 2  
+cv_res_cub_base = calibrate_evaluate_plot(
+    mlf_cub, df = y_base_df, h = horizon, 
+    prediction_intervals = intervals, level = levels,
+    max_insample_length = horizon * 3  
 )
-cv_res_cub['cv_results']
-cv_res_cub['accuracy_table']
-cv_res_cub['plot'].show()
+cv_res_cub_base['cv_results']
+cv_res_cub_base['accuracy_table']
+cv_res_cub_base['plot'].show()
+
+cv_res_cub_wave = calibrate_evaluate_plot(
+    mlf_cub, df = y_wave_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_cub_wave['cv_results']
+cv_res_cub_wave['accuracy_table']
+cv_res_cub_wave['plot'].show()
+
+cv_res_cub_lag = calibrate_evaluate_plot(
+    mlf_cub, df = y_lag_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_cub_lag['cv_results']
+cv_res_cub_lag['accuracy_table']
+cv_res_cub_lag['plot'].show()
 
 
 
@@ -758,6 +644,7 @@ cv_res_cub['plot'].show()
 # - Simple network - Like linear regression with non-linear functions
 # - Can improve learning by adding more hidden units, epochs, etc
 from sklearn.neural_network import MLPRegressor
+
 
 # * Engines ---------------------------------------------------------------
 
@@ -771,64 +658,55 @@ models_nnet = [
         random_state = 0
     )
 ]
+mlf_nnet = MLForecast(models = models_nnet, freq = '1d', num_threads = 1)
 
-# * Recipe ----------------------------------------------------------------
-
-mlf_nnet = MLForecast(
-    models = models_nnet,
-    freq = 'D', 
-    num_threads = 1,
-    lags = [7, 14, 30, 56],
-    lag_transforms = {
-        7: [
-            RollingMean(window_size = 7),
-            ExpandingMean()
-        ],
-        14: [
-            RollingMean(window_size = 14)            
-        ],
-        56: [
-            RollingMean(window_size = 30),
-            RollingMean(window_size = 60), 
-            RollingMean(window_size = 90),
-            ExponentiallyWeightedMean(alpha = 0.3)
-        ]
-    }
-)
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_nnet = pex.calibrate_evaluate_plot(
-    mlf_nnet, data = y_xregs_df, 
-    h = horizon, prediction_intervals = intervals, level = levels,
-    engine = 'plotly', max_insample_length = horizon * 2  
+cv_res_nnet_base = calibrate_evaluate_plot(
+    mlf_nnet, df = y_base_df, h = horizon, 
+    prediction_intervals = intervals, level = levels,
+    max_insample_length = horizon * 3  
 )
-cv_res_nnet['cv_results']
-cv_res_nnet['accuracy_table']
-cv_res_nnet['plot'].show()
+cv_res_nnet_base['cv_results']
+cv_res_nnet_base['accuracy_table']
+cv_res_nnet_base['plot'].show()
+
+cv_res_nnet_wave = calibrate_evaluate_plot(
+    mlf_nnet, df = y_wave_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_nnet_wave['cv_results']
+cv_res_nnet_wave['accuracy_table']
+cv_res_nnet_wave['plot'].show()
+
+cv_res_nnet_lag = calibrate_evaluate_plot(
+    mlf_nnet, df = y_lag_df, 
+    h = horizon, prediction_intervals = intervals, level = levels,
+    engine = 'plotly', max_insample_length = horizon * 3  
+)
+cv_res_nnet_lag['cv_results']
+cv_res_nnet_lag['accuracy_table']
+cv_res_nnet_lag['plot'].show()
 
 
 
 # ML Models' Performance Comparison ---------------------------------------
 
-from sklearn.linear_model import LinearRegression, Lasso, Ridge, ElasticNet
-from sklearn.svm import SVR
-from sklearn.tree import DecisionTreeRegressor
+from sklearn.linear_model import LinearRegression, ElasticNet
 from sklearn.ensemble import AdaBoostRegressor, RandomForestRegressor, GradientBoostingRegressor
 from xgboost import XGBRegressor
 from lightgbm import LGBMRegressor
 from catboost import CatBoostRegressor
 from cubist import Cubist
+from sklearn.neural_network import MLPRegressor
 
 # * Engines ---------------------------------------------------------------
 
 models_ts = [
     LinearRegression(),
-    Ridge(),
-    Lasso(),
-    ElasticNet(),
-    SVR(kernel = 'rbf'),
-    DecisionTreeRegressor(random_state = 0),
+    ElasticNet(l1_ratio = 0.5, alpha = 0.01),
     RandomForestRegressor(
         n_estimators = 100,
         criterion = 'squared_error',
@@ -872,127 +750,61 @@ models_ts = [
         n_committees = 10,
         neighbors = 7,
         random_state = 0
+    ),
+    MLPRegressor(
+        hidden_layer_sizes = (10,),
+        learning_rate_init = 0.1,
+        alpha = 0.1,
+        activation = 'relu',
+        solver = 'adam',
+        random_state = 0
     )
 ]
-mlf_ts = MLForecast(
-    models = models_ts,
-    freq = 'D', 
-    num_threads = 1,
-    lags = [7, 14, 30, 56],
-    lag_transforms = {
-        7: [
-            RollingMean(window_size = 7),
-            ExpandingMean()
-        ],
-        14: [
-            RollingMean(window_size = 14)            
-        ],
-        56: [
-            RollingMean(window_size = 30),
-            RollingMean(window_size = 60), 
-            RollingMean(window_size = 90),
-            ExponentiallyWeightedMean(alpha = 0.3)
-        ]
-    }
-)
+mlf_ts = MLForecast(models = models_ts, freq = '1d', num_threads = 1)
+
 
 # * Evaluation ------------------------------------------------------------
 
-cv_res_ts = pex.calibrate_evaluate_plot(
-    object = mlf_ts, data = y_xregs_df,
-    h = horizon, prediction_intervals = intervals, level = levels,
-    engine = 'plotly', max_insample_length = horizon * 2  
+# only base recipe for simplicity
+# pandas conversion necessary for CatBoost and other boosting models
+y_base_df_pd = y_base_df.to_pandas()
+
+cv_res_ts = calibrate_evaluate_plot(
+    mlf_ts, df = y_base_df_pd, h = horizon, 
+    prediction_intervals = intervals, level = levels,
+    max_insample_length = horizon * 3  
 )
 cv_res_ts['cv_results']
-cv_res_ts['accuracy_table'].print_accuracy_table('min')
+print_accuracy_table(cv_res_ts['accuracy_table'])
 cv_res_ts['plot'].show()
+
 
 # * Refitting & Forecasting -----------------------------------------------
 
-fit_ts = mlf_ts.fit(
-    df = y_xregs_df, 
-    prediction_intervals = intervals,
-    static_features = []
-)
-preds_df_ts = fit_ts.predict(
-    h = horizon, level = levels, X_df = forecast_df.drop('y', axis = 1)
-)
+# pandas conversion necessary for CatBoost and other boosting models
+y_base_df_pd = y_base_df.to_pandas()
+forecast_y_base_df_pd = forecast_y_base_df.to_pandas()
 
-plot_series(
-    y_xregs_df, preds_df_ts,
-    max_insample_length = horizon * 2,
-    level = levels,
-    engine = 'plotly'
-).show()
+fit_ts = mlf_ts.fit(df = y_base_df_pd, prediction_intervals = intervals, static_features = [])
+preds_df_ts = fit_ts.predict(h = horizon, level = levels, X_df = forecast_y_base_df_pd)
+
+plot_series(y_base_df_pd, preds_df_ts, max_insample_length = horizon * 2, engine = 'plotly').show()
+
 
 # * Select Best Model -----------------------------------------------------
 
-preds_best_df = preds_df_ts \
-    .get_best_model_forecast(cv_res_ts['accuracy_table'], 'rmse')
+preds_best_df = get_best_model_forecast(preds_df_ts, cv_res_ts['accuracy_table'], 'rmse')
 plot_series(
-    y_xregs_df, preds_best_df,
-    max_insample_length = horizon * 2,
-    level = levels,
-    engine = 'plotly'
+    y_base_df_pd, preds_best_df, level = levels,
+    max_insample_length = horizon * 2, engine = 'plotly'
 ).show()
+
 
 # * Back-transform --------------------------------------------------------
 
-data_back_dict = pex.back_transform_data(y_xregs_df, params, preds_df_ts)
+back_df = back_transform_data(y_base_df_pd, params)
+back_fcst_best_df = back_transform_forecasts(preds_best_df, params)
 plot_series(
-    data_back_dict['data_back'], 
-    data_back_dict['forecasts_back'], 
-    max_insample_length = horizon * 2,
-    level = levels,
-    engine = 'plotly', 
+    back_df, back_fcst_best_df, level = levels,
+    max_insample_length = horizon * 3, engine = 'plotly'
 ).show()
-
-
-
-
-
-# XX ----------------------------------------------------------------------
-
-# from sklearn.linear_model import Lasso, Ridge, ElasticNet
-
-# # * Engines ---------------------------------------------------------------
-
-# help(ElasticNet)
-# models_xx = [
-
-# ]
-
-# # * Recipe ----------------------------------------------------------------
-
-# mlf_xx = MLForecast(
-#     models = models_xx,
-#     freq = 'D', 
-#     num_threads = 1,
-#     lags = [7, 14, 30, 56],
-#     lag_transforms = {
-#         7: [
-#             RollingMean(window_size = 7),
-#             ExpandingMean()
-#         ],
-#         14: [
-#             RollingMean(window_size = 14)            
-#         ],
-#         56: [
-#             RollingMean(window_size = 30),
-#             RollingMean(window_size = 60), 
-#             RollingMean(window_size = 90),
-#             ExponentiallyWeightedMean(alpha = 0.3)
-#         ]
-#     }
-# )
-
-# # * Evaluation ------------------------------------------------------------
-
-# cv_res_xx = pex.calibrate_evaluate_plot(
-#     mlf_xx, data = y_xregs_df, 
-#     h = horizon, prediction_intervals = intervals, level = levels,
-#     engine = 'plotly', max_insample_length = horizon * 2  
-# )
-# cv_res_xx['cv_results']
-# cv_res_xx['accuracy_table']
-# cv_res_xx['plot'].show()
