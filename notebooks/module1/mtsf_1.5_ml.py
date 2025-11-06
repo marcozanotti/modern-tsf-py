@@ -52,12 +52,12 @@ params = data_loaded['transform_params']
 # in ML modeling we can test various feature sets
 y_df = select_columns(data_prep_df)
 y_base_df = data_prep_df.select(feature_sets['base'])
-y_wave_df = data_prep_df.select(feature_sets['wave'])
+y_four_df = data_prep_df.select(feature_sets['four'])
 y_lag_df = data_prep_df.select(feature_sets['lag']).drop_nulls()
 
 forecast_y_df = select_columns(forecast_df).drop('y')
 forecast_y_base_df = forecast_df.select(feature_sets['base']).drop('y')
-forecast_y_wave_df = forecast_df.select(feature_sets['wave']).drop('y')
+forecast_y_four_df = forecast_df.select(feature_sets['four']).drop('y')
 forecast_y_lag_df = forecast_df.select(feature_sets['lag']).drop('y')
 
 y_df.tk.plot_timeseries('ds', 'y', smooth = False)
@@ -104,14 +104,14 @@ cv_res_lr_base['cv_results']
 cv_res_lr_base['accuracy_table']
 cv_res_lr_base['plot'].show()
 
-cv_res_lr_wave = calibrate_evaluate_plot(
-    mlf_lr, df = y_wave_df, 
+cv_res_lr_four = calibrate_evaluate_plot(
+    mlf_lr, df = y_four_df, 
     h = horizon, prediction_intervals = intervals, level = levels,
     engine = 'plotly', max_insample_length = horizon * 3  
 )
-cv_res_lr_wave['cv_results']
-cv_res_lr_wave['accuracy_table']
-cv_res_lr_wave['plot'].show()
+cv_res_lr_four['cv_results']
+cv_res_lr_four['accuracy_table']
+cv_res_lr_four['plot'].show()
 
 cv_res_lr_lag = calibrate_evaluate_plot(
     mlf_lr, df = y_lag_df, 
@@ -165,14 +165,14 @@ cv_res_elanet_base['cv_results']
 cv_res_elanet_base['accuracy_table']
 cv_res_elanet_base['plot'].show()
 
-cv_res_elanet_wave = calibrate_evaluate_plot(
-    mlf_elanet, df = y_wave_df, 
+cv_res_elanet_four = calibrate_evaluate_plot(
+    mlf_elanet, df = y_four_df, 
     h = horizon, prediction_intervals = intervals, level = levels,
     engine = 'plotly', max_insample_length = horizon * 3  
 )
-cv_res_elanet_wave['cv_results']
-cv_res_elanet_wave['accuracy_table']
-cv_res_elanet_wave['plot'].show()
+cv_res_elanet_four['cv_results']
+cv_res_elanet_four['accuracy_table']
+cv_res_elanet_four['plot'].show()
 
 cv_res_elanet_lag = calibrate_evaluate_plot(
     mlf_elanet, df = y_lag_df, 
@@ -217,14 +217,14 @@ cv_res_mars_base['cv_results']
 cv_res_mars_base['accuracy_table']
 cv_res_mars_base['plot'].show()
 
-cv_res_mars_wave = calibrate_evaluate_plot(
-    mlf_mars, df = y_wave_df, 
+cv_res_mars_four = calibrate_evaluate_plot(
+    mlf_mars, df = y_four_df, 
     h = horizon, prediction_intervals = intervals, level = levels,
     engine = 'plotly', max_insample_length = horizon * 3  
 )
-cv_res_mars_wave['cv_results']
-cv_res_mars_wave['accuracy_table']
-cv_res_mars_wave['plot'].show()
+cv_res_mars_four['cv_results']
+cv_res_mars_four['accuracy_table']
+cv_res_mars_four['plot'].show()
 
 cv_res_mars_lag = calibrate_evaluate_plot(
     mlf_mars, df = y_lag_df, 
@@ -269,14 +269,14 @@ cv_res_svm_base['cv_results']
 cv_res_svm_base['accuracy_table']
 cv_res_svm_base['plot'].show()
 
-cv_res_svm_wave = calibrate_evaluate_plot(
-    mlf_svm, df = y_wave_df, 
+cv_res_svm_four = calibrate_evaluate_plot(
+    mlf_svm, df = y_four_df, 
     h = horizon, prediction_intervals = intervals, level = levels,
     engine = 'plotly', max_insample_length = horizon * 3  
 )
-cv_res_svm_wave['cv_results']
-cv_res_svm_wave['accuracy_table']
-cv_res_svm_wave['plot'].show()
+cv_res_svm_four['cv_results']
+cv_res_svm_four['accuracy_table']
+cv_res_svm_four['plot'].show()
 
 cv_res_svm_lag = calibrate_evaluate_plot(
     mlf_svm, df = y_lag_df, 
@@ -316,14 +316,14 @@ cv_res_knn_base['cv_results']
 cv_res_knn_base['accuracy_table']
 cv_res_knn_base['plot'].show()
 
-cv_res_knn_wave = calibrate_evaluate_plot(
-    mlf_knn, df = y_wave_df, 
+cv_res_knn_four = calibrate_evaluate_plot(
+    mlf_knn, df = y_four_df, 
     h = horizon, prediction_intervals = intervals, level = levels,
     engine = 'plotly', max_insample_length = horizon * 3  
 )
-cv_res_knn_wave['cv_results']
-cv_res_knn_wave['accuracy_table']
-cv_res_knn_wave['plot'].show()
+cv_res_knn_four['cv_results']
+cv_res_knn_four['accuracy_table']
+cv_res_knn_four['plot'].show()
 
 cv_res_knn_lag = calibrate_evaluate_plot(
     mlf_knn, df = y_lag_df, 
@@ -357,14 +357,14 @@ cv_res_gp_base['cv_results']
 cv_res_gp_base['accuracy_table']
 cv_res_gp_base['plot'].show()
 
-cv_res_gp_wave = calibrate_evaluate_plot(
-    mlf_gp, df = y_wave_df, 
+cv_res_gp_four = calibrate_evaluate_plot(
+    mlf_gp, df = y_four_df, 
     h = horizon, prediction_intervals = intervals, level = levels,
     engine = 'plotly', max_insample_length = horizon * 3  
 )
-cv_res_gp_wave['cv_results']
-cv_res_gp_wave['accuracy_table']
-cv_res_gp_wave['plot'].show()
+cv_res_gp_four['cv_results']
+cv_res_gp_four['accuracy_table']
+cv_res_gp_four['plot'].show()
 
 cv_res_gp_lag = calibrate_evaluate_plot(
     mlf_gp, df = y_lag_df, 
@@ -407,14 +407,14 @@ cv_res_tree_base['cv_results']
 cv_res_tree_base['accuracy_table']
 cv_res_tree_base['plot'].show()
 
-cv_res_tree_wave = calibrate_evaluate_plot(
-    mlf_tree, df = y_wave_df, 
+cv_res_tree_four = calibrate_evaluate_plot(
+    mlf_tree, df = y_four_df, 
     h = horizon, prediction_intervals = intervals, level = levels,
     engine = 'plotly', max_insample_length = horizon * 3  
 )
-cv_res_tree_wave['cv_results']
-cv_res_tree_wave['accuracy_table']
-cv_res_tree_wave['plot'].show()
+cv_res_tree_four['cv_results']
+cv_res_tree_four['accuracy_table']
+cv_res_tree_four['plot'].show()
 
 cv_res_tree_lag = calibrate_evaluate_plot(
     mlf_tree, df = y_lag_df, 
@@ -469,14 +469,14 @@ cv_res_rf_base['cv_results']
 cv_res_rf_base['accuracy_table']
 cv_res_rf_base['plot'].show()
 
-cv_res_rf_wave = calibrate_evaluate_plot(
-    mlf_rf, df = y_wave_df, 
+cv_res_rf_four = calibrate_evaluate_plot(
+    mlf_rf, df = y_four_df, 
     h = horizon, prediction_intervals = intervals, level = levels,
     engine = 'plotly', max_insample_length = horizon * 3  
 )
-cv_res_rf_wave['cv_results']
-cv_res_rf_wave['accuracy_table']
-cv_res_rf_wave['plot'].show()
+cv_res_rf_four['cv_results']
+cv_res_rf_four['accuracy_table']
+cv_res_rf_four['plot'].show()
 
 cv_res_rf_lag = calibrate_evaluate_plot(
     mlf_rf, df = y_lag_df, 
@@ -566,14 +566,14 @@ cv_res_boost_base['cv_results']
 cv_res_boost_base['accuracy_table']
 cv_res_boost_base['plot'].show()
 
-cv_res_boost_wave = calibrate_evaluate_plot(
-    mlf_boost, df = y_wave_df, 
+cv_res_boost_four = calibrate_evaluate_plot(
+    mlf_boost, df = y_four_df, 
     h = horizon, prediction_intervals = intervals, level = levels,
     engine = 'plotly', max_insample_length = horizon * 3  
 )
-cv_res_boost_wave['cv_results']
-cv_res_boost_wave['accuracy_table']
-cv_res_boost_wave['plot'].show()
+cv_res_boost_four['cv_results']
+cv_res_boost_four['accuracy_table']
+cv_res_boost_four['plot'].show()
 
 cv_res_boost_lag = calibrate_evaluate_plot(
     mlf_boost, df = y_lag_df, 
@@ -618,14 +618,14 @@ cv_res_cub_base['cv_results']
 cv_res_cub_base['accuracy_table']
 cv_res_cub_base['plot'].show()
 
-cv_res_cub_wave = calibrate_evaluate_plot(
-    mlf_cub, df = y_wave_df, 
+cv_res_cub_four = calibrate_evaluate_plot(
+    mlf_cub, df = y_four_df, 
     h = horizon, prediction_intervals = intervals, level = levels,
     engine = 'plotly', max_insample_length = horizon * 3  
 )
-cv_res_cub_wave['cv_results']
-cv_res_cub_wave['accuracy_table']
-cv_res_cub_wave['plot'].show()
+cv_res_cub_four['cv_results']
+cv_res_cub_four['accuracy_table']
+cv_res_cub_four['plot'].show()
 
 cv_res_cub_lag = calibrate_evaluate_plot(
     mlf_cub, df = y_lag_df, 
@@ -672,14 +672,14 @@ cv_res_nnet_base['cv_results']
 cv_res_nnet_base['accuracy_table']
 cv_res_nnet_base['plot'].show()
 
-cv_res_nnet_wave = calibrate_evaluate_plot(
-    mlf_nnet, df = y_wave_df, 
+cv_res_nnet_four = calibrate_evaluate_plot(
+    mlf_nnet, df = y_four_df, 
     h = horizon, prediction_intervals = intervals, level = levels,
     engine = 'plotly', max_insample_length = horizon * 3  
 )
-cv_res_nnet_wave['cv_results']
-cv_res_nnet_wave['accuracy_table']
-cv_res_nnet_wave['plot'].show()
+cv_res_nnet_four['cv_results']
+cv_res_nnet_four['accuracy_table']
+cv_res_nnet_four['plot'].show()
 
 cv_res_nnet_lag = calibrate_evaluate_plot(
     mlf_nnet, df = y_lag_df, 

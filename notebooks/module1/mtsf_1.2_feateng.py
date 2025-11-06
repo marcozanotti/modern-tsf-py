@@ -25,6 +25,7 @@ import polars as pl
 import pytimetk as tk
 import re
 import pickle
+from datetime import datetime
 
 
 
@@ -212,6 +213,7 @@ data_prep_df \
     .pipe(plot_time_series_regression)
 
 # Wavelet Series Features
+# https://ataspinar.com/posts/a-guide-for-using-the-wavelet-transform-in-machine-learning/
 data_prep_df \
     .tk.augment_wavelet(
         date_column = 'ds', value_column = 'y', scales = [7, 14, 30, 90],  
@@ -308,8 +310,16 @@ horizon = 7 * 8 # 8 weeks
 lag_periods = [7 * 8]
 rolling_periods = [30, 60, 90]
 
-data_prep_full_df = data_prep_df \
-    .tk.future_frame(date_column = 'ds', length_out = horizon) \
+# marketing department told us the future dates of promotions
+future_promo_dict = {
+    'ds': ['2020-03-11', '2020-03-25', '2020-04-08', '2020-04-22', '2020-05-06'],
+    'promo_future': 1
+}
+future_promo_df = pl.DataFrame(future_promo_dict) \
+    .with_columns(pl.col('ds').str.to_datetime(time_unit = 'ns'))
+
+
+data_prep_full_df =  tk.future_frame(data_prep_df, date_column = 'ds', freq = '1d', length_out = horizon) \
     .tk.augment_lags(date_column = 'ds', value_column = 'y', lags = lag_periods) \
     .tk.augment_rolling(
         date_column = 'ds', value_column = 'y_lag_56',
@@ -317,10 +327,6 @@ data_prep_full_df = data_prep_df \
     ) \
     .tk.augment_fourier(
         date_column = 'ds', periods = [7, 14, 30, 90, 365], max_order = 2
-    ) \
-    .tk.augment_wavelet(
-        date_column = 'ds', value_column = 'y', scales = [7, 14, 30, 90],  
-        sample_rate = 7, method = 'bump'
     ) \
     .tk.augment_timeseries_signature(date_column = 'ds') \
     .drop(
@@ -332,13 +338,21 @@ data_prep_full_df = data_prep_df \
     .with_columns(standardize('ds_index_num').alias('ds_index_num')) \
     .to_dummies(columns = ['ds_wday_lbl', 'ds_month_lbl']) \
     .drop('ds_wday_lbl_Monday', 'ds_month_lbl_January') \
+    .join(future_promo_df, on = 'ds', how = 'left') \
     .with_columns(
         pl.when(pl.col('promo').is_null())
         .then(0)
         .otherwise(pl.col('promo'))
         .alias('promo')
-    )
-
+    ) \
+    .with_columns(
+        pl.when(pl.col('promo_future').is_null())
+        .then(0)
+        .otherwise(pl.col('promo_future'))
+        .alias('promo_future')
+    )  \
+    .with_columns((pl.col("promo") + pl.col("promo_future")).alias("promo")) \
+    .drop('promo_future')
 data_prep_full_df.glimpse()
 
 
@@ -351,23 +365,23 @@ forecast_df = data_prep_full_df.tail(n = horizon)
 # * Create different Features Sets ('Recipes') ----------------------------
 
 # base feature set (no lags, no wavelets)
-r = re.compile(r'(lag)|(bump)')
+r = re.compile(r'(lag)|(sin)|(cos)')
 base_fs = [i for i in data_model_df.columns if not r.search(i)]
 base_fs
 
-# wavalets feature set (no lags)
+# fourier feature set (no lags)
 r = re.compile(r'lag')
-wave_fs = [i for i in data_model_df.columns if not r.search(i)]
-wave_fs
+four_fs = [i for i in data_model_df.columns if not r.search(i)]
+four_fs
 
 # lag feature set (no wavelets)
-r = re.compile(r'bump')
+r = re.compile(r'(sin)|(cos)')
 lag_fs = [i for i in data_model_df.columns if not r.search(i)]
 lag_fs
 
 feature_sets = {
     'base': base_fs,
-    'wave': wave_fs,
+    'four': four_fs,
     'lag': lag_fs
 }
 
