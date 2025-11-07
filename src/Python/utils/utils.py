@@ -154,6 +154,7 @@ def calibrate_evaluate_plot(
     prediction_intervals = None, 
     level = None,
     loss = None,
+    by_id = False,
     engine = 'plotly',
     max_insample_length = None, 
     plot_level = False
@@ -207,13 +208,20 @@ def calibrate_evaluate_plot(
 
         cv_res_no_cutoff = cv_res.drop('cutoff')
     
-
-    acc_res = evaluate(
-        df = cv_res_no_cutoff,
-        train_df = df,
-        metrics = [bias, mae, mape, mse, rmse],
-        agg_fn = 'mean'
-    )
+    if by_id:
+        acc_res = evaluate(
+            df = cv_res_no_cutoff,
+            train_df = df,
+            metrics = [bias, mae, mape, mse, rmse]
+        ) \
+        .sort('unique_id')
+    else:
+        acc_res = evaluate(
+            df = cv_res_no_cutoff,
+            train_df = df,
+            metrics = [bias, mae, mape, mse, rmse],
+            agg_fn = 'mean'
+        )        
 
     if not plot_level:
         level = None
@@ -243,15 +251,14 @@ def print_accuracy_table(df, type = 'min'):
     
     if not isinstance(df, pd.DataFrame):
         df = df.to_pandas()
+
+    data_res = df.set_index('metric')
     
     if type == 'min':
-        data_res = df \
-            .set_index('metric') \
-            .style.highlight_min(color = 'green', axis = 1)
+        data_res = data_res.style.highlight_min(color = 'green', axis = 1)
     else:
-        data_res = df \
-            .set_index('metric') \
-            .style.highlight_max(color = 'red', axis = 1)   
+        data_res = data_res.style.highlight_max(color = 'red', axis = 1) 
+
     return data_res
 
 # function to select columns of a dataframe based on regex
@@ -265,23 +272,67 @@ def select_columns(df, regex = None):
     return df[cols_name]
 
 # function to select the best model from accuracy table
-def get_best_model_name(accuracy_df, metric = 'rmse'):
+def get_best_model_name(accuracy_df, metric = 'rmse', by_id = False):
 
     if isinstance(accuracy_df, pd.DataFrame):
         accuracy_df = pl.from_pandas(accuracy_df)
 
-    model_name = accuracy_df \
-        .melt(id_vars = 'metric') \
-        .filter(pl.col('metric') == metric) \
-        .filter(pl.col('value') == pl.col('value').min()) \
-        .select('variable') \
-        .item()
+    if by_id:
+        
+        model_name = accuracy_df \
+            .melt(id_vars = ['unique_id', 'metric']) \
+            .filter(pl.col('metric') == metric) \
+            .group_by('unique_id') \
+            .agg([
+                pl.col('variable').filter(pl.col('value') == pl.col('value').min()).first().alias('variable')
+            ])
+
+    else:
+
+        model_name = accuracy_df \
+            .melt(id_vars = 'metric') \
+            .filter(pl.col('metric') == metric) \
+            .filter(pl.col('value') == pl.col('value').min()) \
+            .select('variable') \
+            .item()
+    
     return model_name
 
 # function to get the best model forecast results
-def get_best_model_forecast(forecasts_data, accuracy_data, metric = 'rmse'):
-    best_name = get_best_model_name(accuracy_data, metric = metric)
-    best_forecasts = select_columns(forecasts_data, regex = f'{best_name}')
+def get_best_model_forecast(forecasts_data, accuracy_data, metric = 'rmse', by_id = False):
+    
+    best_name = get_best_model_name(accuracy_data, metric = metric, by_id = by_id)
+
+    if by_id:
+
+        best_forecasts = forecasts_data \
+            .melt(id_vars = ['unique_id', 'ds'], variable_name = 'model', value_name = 'fcst') \
+            .join(best_name, on = 'unique_id', how = 'inner') \
+            .filter(
+                pl.struct(['model', 'variable']).map_elements(
+                    lambda row: row['model'].startswith(row['variable'])
+                )
+            ) \
+            .select('unique_id', 'ds', 'model', 'fcst') \
+            .with_columns(pl.col('model').str.splitn('-', 2).alias('split')) \
+            .drop('model') \
+            .unnest('split').rename({'field_0': 'model', 'field_1': 'type'}) \
+            .with_columns(
+                pl.when(pl.col('type').is_null())
+                .then('type')
+                .otherwise(pl.lit('fcst-') + pl.col('type'))
+                .alias('type')
+            ) \
+            .with_columns(pl.col('type').fill_null('fcst')) \
+            .pivot(
+                values = 'fcst',
+                index = ['unique_id', 'ds', 'model'],
+                columns = 'type'
+            )
+    else:
+
+        best_forecasts = select_columns(forecasts_data, regex = f'{best_name}')
+    
     return best_forecasts
 
 # function to back transform results

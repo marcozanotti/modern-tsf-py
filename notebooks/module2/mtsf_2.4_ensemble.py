@@ -1,7 +1,7 @@
-# Time Series Forecasting: Machine Learning and Deep Learning with R & Python ----
-
-# Lecture 10: Ensemble Learning -------------------------------------------
+# Modern Time Series Forecasting with Python ----
 # Marco Zanotti
+
+# Lecture 2.4: Ensemble Learning -------------------------------------------
 
 # Goals:
 # - Ensemble Learning
