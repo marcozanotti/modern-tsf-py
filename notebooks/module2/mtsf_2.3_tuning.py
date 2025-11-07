@@ -1,7 +1,7 @@
-# Time Series Forecasting: Machine Learning and Deep Learning with R & Python ----
-
-# Lecture 9: Hyperparameter Tuning ----------------------------------------
+# Modern Time Series Forecasting with Python ----
 # Marco Zanotti
+
+# Lecture 2.3: Hyperparameter Tuning ----------------------------------------
 
 # Goals:
 # - Sequential / Non-Sequential Models
@@ -16,43 +16,53 @@
 
 # Packages ----------------------------------------------------------------
 
-import os
-import pickle
 import re
-
-import numpy as np
+import pickle
+import sys
+sys.path.insert(0, 'src/Python/utils')
+from utils import (
+    plot_cross_validation_plan, select_columns, print_accuracy_table, get_best_model_name
+)
+import pytimetk as tk
 import pandas as pd
 
 from mlforecast import MLForecast
-from mlforecast.lag_transforms import (
-    RollingMean, ExponentiallyWeightedMean, ExpandingMean
-)
+from neuralforecast import NeuralForecast
 from mlforecast.utils import PredictionIntervals
 from utilsforecast.evaluation import evaluate
 from neuralforecast.losses.pytorch import MQLoss
 from utilsforecast.losses import bias, mae, mape, mse, rmse
 from utilsforecast.plotting import plot_series
 
-import python_extensions as pex
-
-pd.set_option("display.max_rows", 3)
-os.environ['NIXTLA_ID_AS_COL'] = '1'
+from mlforecast.lag_transforms import (
+    RollingMean, ExponentiallyWeightedMean, ExpandingMean
+)
 
 
 
 # Data & Artifacts --------------------------------------------------------
 
-with open('artifacts/Python/feature_engineering_artifacts_list.pkl', 'rb') as f:
+with open('data/email/artifacts/feature_engineering_artifacts_list.pkl', 'rb') as f:
     data_loaded = pickle.load(f)
 data_prep_df = data_loaded['data_prep_df']
 forecast_df = data_loaded['forecast_df']
 feature_sets = data_loaded['feature_sets']
 params = data_loaded['transform_params']
 
-plot_series(data_prep_df).show()
+
+# * Recipes ---------------------------------------------------------------
+
+y_xregs_df = select_columns(data_prep_df, 'promo')
+
+forecast_xregs_df = select_columns(forecast_df, 'promo').drop('y')
+
+y_xregs_df.tk.plot_timeseries('ds', 'y', smooth = False)
+
 
 # * Forecast Horizon ------------------------------------------------------
+
 horizon = 7 * 8 # 8 weeks
+
 
 # * Prediction Intervals --------------------------------------------------
 
@@ -62,20 +72,9 @@ intervals = PredictionIntervals(h = horizon, n_windows = 2, method = 'conformal_
 
 # * Train / Test Split ----------------------------------------------------
 
-train_df = data_prep_df \
-    .select_columns('(event)|(holiday)|(inter_)|(ds_)') \
-    .head(n = -horizon)
-test_df = data_prep_df \
-    .select_columns('(event)|(holiday)|(inter_)|(ds_)') \
-    .tail(n = horizon)
-fcst_df = forecast_df \
-    .select_columns('(event)|(holiday)|(inter_)|(ds_)')
-
-pex.plot_cross_validation_plan(
-    data_prep_df, freq = 'D', h = horizon, 
-    n_windows = 1, step_size = 1, 
-    engine = 'matplotlib'
-)
+train_df = y_xregs_df.head(n = -horizon)
+test_df = y_xregs_df.tail(n = horizon)
+fcst_df = forecast_xregs_df
 
 
 
@@ -109,10 +108,8 @@ pex.plot_cross_validation_plan(
 # Validation Strategies ---------------------------------------------------
 
 # Time-series cross-validation
-pex.plot_cross_validation_plan(
-    data_prep_df, freq = 'D', h = horizon, 
-    n_windows = 12, step_size = 7, 
-    engine = 'matplotlib'
+plot_cross_validation_plan(
+    y_xregs_df, freq = '1d', h = horizon, n_windows = 6, step_size = 7, engine = 'plotly'
 )
 
 # V-fold cross-validation
@@ -164,72 +161,54 @@ pex.plot_cross_validation_plan(
 # Tuning - ML Models ------------------------------------------------------
 
 from sklearn.linear_model import ElasticNet
-from lightgbm import LGBMRegressor
+from xgboost import XGBRegressor
 
 import optuna
 from mlforecast.auto import (
     AutoMLForecast,
     AutoModel,
-    AutoLightGBM,
-    AutoElasticNet
+    AutoElasticNet,
+    AutoXGBoost
 )
 optuna.logging.set_verbosity(optuna.logging.ERROR)
 
+
 # * Non-Optimized Models --------------------------------------------------
+
 models_mlf = [
-    ElasticNet(l1_ratio = 0.5),
-    LGBMRegressor(
-        n_estimators = 100,
-        learning_rate = 0.1,
-        objective = 'rmse',
-        random_state = 0
+    ElasticNet(l1_ratio = 0.5, alpha = 0.1),
+    XGBRegressor(
+        n_estimators = 100, learning_rate = 0.1, objective = 'reg:squarederror', random_state = 0
     )  
 ]
 
 mlf = MLForecast(
     models = models_mlf,
-    freq = 'D', 
-    num_threads = 1,
-    lags = [1, 2, 7, 14, 30],
+    freq = '1d', 
+    num_threads = -1,
+    lags = [horizon],
     lag_transforms = {
-        7: [
+        horizon: [
+            ExpandingMean(),
             RollingMean(window_size = 7),
-            ExpandingMean()
-        ],
-        14: [
-            RollingMean(window_size = 14)            
-        ],
-        30: [
-            RollingMean(window_size = 30),
-            RollingMean(window_size = 60), 
-            RollingMean(window_size = 90),
+            RollingMean(window_size = 14),
             ExponentiallyWeightedMean(alpha = 0.3)
         ]
-    }
+    },
+    date_features = ['quarter', 'month', 'week', 'weekday', 'day']
 )
 
-mlf_fit = mlf.fit(
-    df = train_df, 
-    prediction_intervals = intervals,
-    static_features = []
-)
-mlf_preds_df = mlf_fit.predict(
-    h = horizon, 
-    level = levels, 
-    X_df = test_df.drop('y', axis = 1)
-)
+mlf_fit = mlf.fit(df = train_df, prediction_intervals = intervals, static_features = [])
+mlf_preds_df = mlf_fit.predict(h = horizon, level = levels, X_df = test_df)
 
 evaluate(
-    df = mlf_preds_df \
-        .merge(test_df.select_columns(), on = ['unique_id', 'ds']), 
+    df = mlf_preds_df.join(select_columns(test_df), on = ['unique_id', 'ds']), 
     metrics = [bias, mae, mape, mse, rmse],
     agg_fn = 'mean'
 )
 plot_series(
-    pd.concat([train_df, test_df]), mlf_preds_df,
-    max_insample_length = horizon * 2,
-    level = levels,
-    engine = 'plotly'
+    y_xregs_df, mlf_preds_df, level = levels, 
+    max_insample_length = horizon * 2, engine = 'plotly'
 ).show()
 
 
@@ -248,17 +227,19 @@ plot_series(
 # optuna trial and returns the model parameters. Then simply create the auto
 # version of the desired model using the AutoModel function specifing 
 # the model and the configuration.
-def lgb_config(trial: optuna.Trial):
+def elanet_config(trial: optuna.Trial):
     return {
-        'learning_rate': 0.05,
-        'verbosity': -1,
-        'num_leaves': trial.suggest_int('num_leaves', 2, 128, log = True),
-        'objective': trial.suggest_categorical('objective', ['l1', 'l2', 'rmse']),
+        'l1_ratio': trial.suggest_float('l1_ratio', 0.1, 1, step = 0.1, log = False),
+        'alpha': trial.suggest_float('alpha', 0.01, 0.5, log = False)
     }
-my_lgb = AutoModel(
-    model = LGBMRegressor(),
-    config = lgb_config,
-)
+my_elanet = AutoModel(model = ElasticNet(), config = elanet_config)
+
+def xgb_config(trial: optuna.Trial):
+    return {
+        'n_estimators': trial.suggest_int('n_estimators', 50, 500, step = 50, log = False),
+        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.5, log = True)
+    }
+my_xgb = AutoModel(model = XGBRegressor(), config = xgb_config)
 
 # ** Tuning features ------------------------------------------------------
 
@@ -272,23 +253,16 @@ def init_config(trial: optuna.Trial):
     #     RollingMean(window_size=24 * 7, min_samples=1),
     # ]
     # lag_to_transform = trial.suggest_categorical('lag_to_transform', [24, 48])
-    lags = [7, 14, 30]
+    lags = [horizon]
     lag_transforms = {
-        7: [
+        horizon: [
+            ExpandingMean(),
             RollingMean(window_size = 7),
-            ExpandingMean()
-        ],
-        14: [
-            RollingMean(window_size = 14)            
-        ],
-        30: [
-            RollingMean(window_size = 30),
-            # RollingMean(window_size = 60), # too few data points for this transformation 
-            # RollingMean(window_size = 90), # too few data points for this transformation
+            RollingMean(window_size = 14),
             ExponentiallyWeightedMean(alpha = 0.3)
         ]
     }
-    date_features = []
+    date_features = ['quarter', 'month', 'week', 'weekday', 'day']
     res = {
         'lags': lags, 
         'lag_transforms': lag_transforms,
@@ -319,14 +293,16 @@ def fit_config(trial: optuna.Trial):
     return res
 
 # ** Engines --------------------------------------------------------------
+
 models_auto_mlf = {
     'elanet_default': AutoElasticNet(), 
-    'lgbm_default': AutoLightGBM(),
-    'my_lgbm': my_lgb
+    'my_elanet': my_elanet,
+    'xgb_default': AutoXGBoost(),
+    'my_xgb': my_xgb
 }
 auto_mlf = AutoMLForecast(
     models = models_auto_mlf,
-    freq = 'D',
+    freq = '1d',
     init_config = init_config,
     fit_config = fit_config,
     # season_length = 7, # not to use with init_config
@@ -336,11 +312,12 @@ auto_mlf = AutoMLForecast(
 
 # Finally you can run the optimization process through the .fit method.
 auto_mlf.fit(
-    train_df,
-    h = horizon,
-    n_windows = 6, # 12 is not possible because too short time series (also for Conformal intervals)
+    train_df, 
+    h = horizon, 
+    prediction_intervals = intervals,
+    n_windows = 6,
     refit = 7, # step_size
-    num_samples = 20 # number of trials to run
+    num_samples = 5 # number of trials to run
 )
 
 # ** Extracting results ---------------------------------------------------
@@ -352,8 +329,9 @@ auto_mlf.fit(
 # These final models are MLForecast objects and are saved in the 
 # models_ attribute.
 auto_mlf.results_['elanet_default'].best_params
-auto_mlf.results_['lgbm_default'].best_params
-auto_mlf.results_['my_lgbm'].best_params
+auto_mlf.results_['my_elanet'].best_params
+auto_mlf.results_['xgb_default'].best_params
+auto_mlf.results_['my_xgb'].best_params
 
 # ** Evaluation -----------------------------------------------------------
 
@@ -361,23 +339,65 @@ auto_mlf_preds_df = auto_mlf.predict(h = horizon, level = levels, X_df = test_df
 auto_mlf_preds_df
 
 evaluate(
-    df = auto_mlf_preds_df \
-        .merge(test_df.select_columns(), on = ['unique_id', 'ds']), 
+    df = auto_mlf_preds_df.join(select_columns(test_df), on = ['unique_id', 'ds']), 
     metrics = [bias, mae, mape, mse, rmse],
     agg_fn = 'mean'
 )
 plot_series(
-    pd.concat([train_df, test_df]), auto_mlf_preds_df,
-    max_insample_length = horizon * 2,
-    level = None,
-    engine = 'plotly'
+    y_xregs_df, auto_mlf_preds_df, level = levels, 
+    max_insample_length = horizon * 2, engine = 'plotly'
 ).show()
 
 # ** Refitting & Forecasting ----------------------------------------------
 
 # To refit the optimized model you have to save the model object and 
 # follow the usual ML workflow using MLForecast().ft and MLForecast.predict().
-auto_mlf.models_
+accuracy_df = evaluate(
+    df = auto_mlf_preds_df.join(select_columns(test_df), on = ['unique_id', 'ds']), 
+    metrics = [bias, mae, mape, mse, rmse],
+    agg_fn = 'mean'
+)
+print_accuracy_table(accuracy_df)
+get_best_model_name(accuracy_df)
+
+auto_mlf.results_['xgb_default'].best_params
+
+best_ml_model = [
+    XGBRegressor(
+        # **auto_mlf.results_['xgb_default'].best_params
+        n_estimators = 279,
+        max_depth = 8,
+        learning_rate = 0.011210257719242916,
+        subsample = 0.6115905539817836,
+        colsample_bytree = 0.11691082039271963,
+        reg_lambda = 0.0008731401853192552,
+        reg_alpha = 0.0007884347942330393,
+        min_child_weight = 7
+    )
+]
+best_mlf = MLForecast(
+    models = best_ml_model,
+    freq = '1d',
+    num_threads = -1,
+    lags = [horizon],
+    lag_transforms = {
+        horizon: [
+            ExpandingMean(),
+            RollingMean(window_size = 7),
+            RollingMean(window_size = 14),
+            ExponentiallyWeightedMean(alpha = 0.3)
+        ]
+    },
+    date_features = ['quarter', 'month', 'week', 'weekday', 'day']
+)
+
+best_ml_fit = best_mlf.fit(df = y_xregs_df, prediction_intervals = intervals, static_features = [])
+
+best_mlf_fcst_df = best_ml_fit.predict(h = horizon, level = levels, X_df = fcst_df)
+
+plot_series(
+    y_xregs_df, best_mlf_fcst_df, max_insample_length = horizon * 2, engine = 'plotly'
+).show()
 
 
 
@@ -430,10 +450,10 @@ models_nf = [
         input_size = 30,
         num_layers = 2,
         hidden_size = 128,
-        max_steps = 300,
+        max_steps = 50,
         loss = MQLoss(level = levels),
-        futr_exog_list = ['event'],
-        hist_exog_list = ['event'],
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0
     ),
     GRU(
@@ -445,10 +465,10 @@ models_nf = [
         encoder_activation = 'relu',
         decoder_layers = 2,
         decoder_hidden_size = 128,
-        max_steps = 300,
+        max_steps = 50,
         loss = MQLoss(level = levels),
-        futr_exog_list = ['event'],
-        hist_exog_list = ['event'],
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0 
     ),
     NBEATSx(
@@ -456,42 +476,33 @@ models_nf = [
         input_size = 30,
         stack_types = ['identity', 'trend', 'seasonality'],
         loss = MQLoss(level = levels),
-        max_steps = 300,
-        futr_exog_list = ['event'],
-        hist_exog_list = ['event'],
+        max_steps = 50,
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0
     ),
     NHITS(
         h = horizon, 
         input_size = 30,
         loss = MQLoss(level = levels),
-        max_steps = 300,
-        futr_exog_list = ['event'],
-        hist_exog_list = ['event'],
+        max_steps = 50,
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 0
     )
 ]
-
-nf = NeuralForecast(
-    models = models_nf,
-    freq = 'D'    
-)
+nf = NeuralForecast(models = models_nf, freq = '1d')
 
 nf.fit(df = train_df)
-nf_preds_df = nf.predict(futr_df = test_df.drop('y', axis = 1)) \
-    .rename(columns = lambda x: re.sub('-median', '', x))
+nf_preds_df = nf.predict(futr_df = test_df).rename(lambda x: re.sub('-median', '', x))
 
 evaluate(
-    df = nf_preds_df \
-        .merge(test_df.select_columns(), on = ['unique_id', 'ds']), 
+    df = nf_preds_df.join(select_columns(test_df), on = ['unique_id', 'ds']),
     metrics = [bias, mae, mape, mse, rmse],
     agg_fn = 'mean'
 )
 plot_series(
-    pd.concat([train_df, test_df]), nf_preds_df,
-    max_insample_length = horizon * 2,
-    # level = levels,
-    engine = 'plotly'
+    y_xregs_df, nf_preds_df, max_insample_length = horizon * 2, engine = 'plotly'
 ).show()
 
 
@@ -517,8 +528,9 @@ plot_series(
 # - n_series: Optional, the number of unique time series, required only 
 #   for Multivariate models.
 
-# ATTENTION:
-# to get default configuration you need to work with the 'ray' backend
+# ATTENTION: to get default configuration you need to work with the 'ray' backend
+
+# explore configurations
 config = AutoMLP.get_default_config(h = horizon, backend = 'ray')
 config.keys()
 config['hidden_size'].categories
@@ -531,37 +543,35 @@ nhits_config = AutoNHITS.get_default_config(h = horizon, backend = 'ray')
 
 # ** Tuning model parameters ----------------------------------------------
 
+# Add non tunable exogenous features
+mlp_config['max_steps'] = 50
+mlp_config['futr_exog_list'] = ['promo']
+mlp_config['hist_exog_list'] = ['promo']
+
+gru_config['max_steps'] = 50
+gru_config['futr_exog_list'] = ['promo']
+gru_config['hist_exog_list'] = ['promo']
+
+nbeats_config['max_steps'] = 50
+nbeats_config['futr_exog_list'] = ['promo']
+nbeats_config['hist_exog_list'] = ['promo']
+
+nhits_config['max_steps'] = 50
+nhits_config['futr_exog_list'] = ['promo']
+nhits_config['hist_exog_list'] = ['promo']
+
 # Define a custom grid configuration for NHITS
 nhits_config_custom = {
-    "max_steps": 100, # Number of SGD steps
+    "max_steps": 50, # Number of SGD steps
     "input_size": 24, # Size of input window
     "learning_rate": tune.loguniform(1e-5, 1e-1), # Initial Learning rate
     "n_pool_kernel_size": tune.choice([[2, 2, 2], [16, 8, 1]]), # MaxPool's Kernelsize
     "n_freq_downsample": tune.choice([[168, 24, 1], [24, 12, 1], [1, 1, 1]]), # Interpolation expressivity ratios
     "val_check_steps": 50, # Compute validation every 50 steps
     "random_seed": tune.randint(1, 10), # Random seed
-    "futr_exog_list": ['event'],
-    "hist_exog_list": ['event']
+    "futr_exog_list": ['promo'],
+    "hist_exog_list": ['promo']
 }
-
-# Add non tunable exogenous features
-mlp_config['futr_exog_list'] = ['event']
-mlp_config['hist_exog_list'] = ['event']
-
-gru_config['futr_exog_list'] = ['event']
-gru_config['hist_exog_list'] = ['event']
-
-nbeats_config['futr_exog_list'] = ['event']
-nbeats_config['hist_exog_list'] = ['event']
-
-nhits_config['futr_exog_list'] = ['event']
-nhits_config['hist_exog_list'] = ['event']
-
-# to quickly see results
-# mlp_config['max_steps'] = 10
-# gru_config['max_steps'] = 10
-# nbeats_config['max_steps'] = 10
-# nhits_config['max_steps'] = 10
 
 # ** Engines --------------------------------------------------------------
 
@@ -618,10 +628,7 @@ models_auto_nf = [
         alias = 'NHITS_custom'
     )
 ]
-auto_nf = NeuralForecast(
-    models = models_auto_nf,
-    freq = 'D'
-)
+auto_nf = NeuralForecast(models = models_auto_nf, freq = '1d')
 
 # ** Tuning ---------------------------------------------------------------
 
@@ -644,21 +651,17 @@ auto_nf.models[4].results.get_dataframe()
 
 # ** Evaluation -----------------------------------------------------------
 
-auto_nf_preds_df = auto_nf.predict(futr_df = test_df) \
-    .rename(columns = lambda x: re.sub('-median', '', x))
+auto_nf_preds_df = auto_nf.predict(futr_df = test_df).rename(lambda x: re.sub('-median', '', x))
 auto_nf_preds_df
 
 evaluate(
-    df = auto_nf_preds_df \
-        .merge(test_df.select_columns(), on = ['unique_id', 'ds']), 
+    df = auto_nf_preds_df.join(select_columns(test_df), on = ['unique_id', 'ds']), 
     metrics = [bias, mae, mape, mse, rmse],
     agg_fn = 'mean'
 )
+
 plot_series(
-    pd.concat([train_df, test_df]), auto_nf_preds_df,
-    max_insample_length = horizon * 2,
-    level = None,
-    engine = 'plotly'
+    y_xregs_df, auto_nf_preds_df, max_insample_length = horizon * 2, engine = 'plotly'
 ).show()
 
 # ** Refitting & Forecasting ----------------------------------------------
@@ -685,21 +688,18 @@ best_auto_model = [
         encoder_n_layers = 2,
         decoder_hidden_size = 128,
         max_steps = 500,
-        futr_exog_list = ['event'],
-        hist_exog_list = ['event'],
+        futr_exog_list = ['promo'],
+        hist_exog_list = ['promo'],
         random_seed = 17       
     )
 ]
-best_auto_nf = NeuralForecast(
-    models = best_auto_model,
-    freq = 'D' 
-)
-best_auto_nf.fit(df = pd.concat([train_df, test_df]))
+best_auto_nf = NeuralForecast(models = best_auto_model, freq = '1d')
+
+best_auto_nf.fit(df = y_xregs_df)
+
 best_auto_nf_fcst_df = best_auto_nf.predict(futr_df = fcst_df) \
-    .rename(columns = lambda x: re.sub('-median', '', x))
+    .rename(lambda x: re.sub('-median', '', x))
+
 plot_series(
-    pd.concat([train_df, test_df]), best_auto_nf_fcst_df,
-    max_insample_length = horizon * 2,
-    level = None,
-    engine = 'plotly'
+    y_xregs_df, best_auto_nf_fcst_df, max_insample_length = horizon * 2, engine = 'plotly'
 ).show()
