@@ -3,80 +3,75 @@
 
 # Lecture 2.2: Automatic Machine Learning Algorithms ------------------------
 
-
 # Goals:
 # - Nixtla Auto-models
 # - H20
-# - AutoGluon
 
 
 
 # Packages ----------------------------------------------------------------
 
-import os
 import pickle
-import re
-
-import numpy as np
-import pandas as pd
-# import polars as pl
+import sys
+sys.path.insert(0, 'src/Python/utils')
+from utils import (
+    plot_cross_validation_plan, select_columns, calibrate_evaluate_plot,
+    print_accuracy_table, get_best_model_forecast, 
+    back_transform_data, back_transform_forecasts
+)
 import pytimetk as tk
+import pandas as pd
 
-from statsforecast.utils import ConformalIntervals
-from utilsforecast.evaluation import evaluate
-from utilsforecast.losses import bias, mae, mape, mse, rmse
-from neuralforecast.losses.pytorch import MQLoss, DistributionLoss, MSE
+from statsforecast import StatsForecast
+from mlforecast import MLForecast
+from neuralforecast import NeuralForecast
+from mlforecast.utils import PredictionIntervals
+from neuralforecast.losses.pytorch import MQLoss
 from utilsforecast.plotting import plot_series
-
-import python_extensions as pex
-
-pd.set_option("display.max_rows", 3)
-os.environ['NIXTLA_ID_AS_COL'] = '1'
 
 
 
 # Data & Artifacts --------------------------------------------------------
 
-with open('artifacts/Python/feature_engineering_artifacts_list.pkl', 'rb') as f:
+with open('data/email/artifacts/feature_engineering_artifacts_list.pkl', 'rb') as f:
     data_loaded = pickle.load(f)
 data_prep_df = data_loaded['data_prep_df']
 forecast_df = data_loaded['forecast_df']
 feature_sets = data_loaded['feature_sets']
 params = data_loaded['transform_params']
 
-plot_series(data_prep_df).show()
+
+# * Recipes ---------------------------------------------------------------
+
+y_df = select_columns(data_prep_df)
+y_xregs_df = select_columns(data_prep_df, 'promo')
+y_lag_df = data_prep_df.select(feature_sets['lag']).drop_nulls()
+
+forecast_y_df = select_columns(forecast_df).drop('y')
+forecast_xregs_df = select_columns(forecast_df, 'promo').drop('y')
+forecast_lag_df = forecast_df.select(feature_sets['lag']).drop('y')
+
+y_df.tk.plot_timeseries('ds', 'y', smooth = False)
+
 
 # * Forecast Horizon ------------------------------------------------------
+
 horizon = 7 * 8 # 8 weeks
+
 
 # * Prediction Intervals --------------------------------------------------
 
 levels = [80, 95]
-intervals = ConformalIntervals(h = horizon, n_windows = 2)
+intervals = PredictionIntervals(h = horizon, n_windows = 2)
+
 
 # * Cross-validation Plan -------------------------------------------------
 
-pex.plot_cross_validation_plan(
-    data_prep_df, freq = 'D', h = horizon, 
-    n_windows = 1, step_size = 1, 
-    engine = 'matplotlib'
-)
-
-# * External Regressors ---------------------------------------------------
-
-y_df = data_prep_df.select_columns()
-y_xregs_df = data_prep_df.select_columns('(event)')
+plot_cross_validation_plan(y_df, freq = '1d', h = horizon, n_windows = 1, step_size = 1)
 
 
 
 # Nixtla Auto-models ------------------------------------------------------
-
-from statsforecast import StatsForecast
-from mlforecast import MLForecast
-from neuralforecast import NeuralForecast
-from ray.tune.search.hyperopt import HyperOptSearch
-import optuna
-optuna.logging.set_verbosity(optuna.logging.ERROR)
 
 # Statistical Models
 # Automatic forecasts of large numbers of univariate time series are 
@@ -101,13 +96,13 @@ from statsforecast.models import (
 )
 
 # Machine Learning Models
-import lightgbm as lgb
+# Automatic version of classical ML models
 from sklearn.linear_model import ElasticNet
+from xgboost import XGBRegressor
 from mlforecast.auto import (
     AutoMLForecast,
-    AutoModel,
     AutoElasticNet, 
-    AutoLightGBM
+    AutoXGBoost
 )
 
 # Deep Learning Models
@@ -135,6 +130,13 @@ from neuralforecast.auto import (
     AutoNHITS
 )
 
+# Optimization Backends
+# Ray or Optuna
+from ray.tune.search.hyperopt import HyperOptSearch
+# import optuna
+# optuna.logging.set_verbosity(optuna.logging.ERROR)
+
+
 # * Engines ---------------------------------------------------------------
 
 # Statistical Models
@@ -146,68 +148,56 @@ models_sf = [
     AutoTBATS(season_length = [7, 14, 30]),
     AutoMFLES(test_size = horizon, n_windows = 1, season_length = 7, metric = 'mse')
 ]
-sf = StatsForecast(
-    models = models_sf, 
-    freq = 'D', 
-    n_jobs = -1,
-)
+sf = StatsForecast(models = models_sf, freq = '1d', n_jobs = -1)
 
 # Machine Learning Models
 models_mlf = [
     AutoElasticNet(),
-    AutoLightGBM()
+    AutoXGBoost()
 ]
 mlf = AutoMLForecast(
-    models = models_mlf,
-    freq = 'D',
-    season_length = 7, 
-    num_threads = -1
+    models = models_mlf, freq = '1d', season_length = 7, num_threads = -1,
+    fit_config = lambda trial: {'static_features': []},
 )
 
 # Deep Learning Models
 rnn_config = AutoRNN.get_default_config(h = horizon, backend = 'ray')
-rnn_config
-rnn_config['futr_exog_list'] = ['event']
-rnn_config['hist_exog_list'] = ['event']
-# rnn_config['max_steps'] = 10 # set to show quick results
+rnn_config['max_steps'] = 50
+rnn_config['futr_exog_list'] = ['promo']
+rnn_config['hist_exog_list'] = ['promo']
 
-nhits_config = AutoNHITS.get_default_config(h = horizon, backend = 'ray') 
-nhits_config
-nhits_config['futr_exog_list'] = ['event']
-nhits_config['hist_exog_list'] = ['event']
-# nhits_config['max_steps'] = 10 # set to show quick results
+nhits_config = AutoNHITS.get_default_config(h = horizon, backend = 'ray')
+nhits_config['max_steps'] = 50
+nhits_config['futr_exog_list'] = ['promo']
+nhits_config['hist_exog_list'] = ['promo']
 
 models_nf = [
     AutoRNN(
         h = horizon,
         loss = MQLoss(level = levels),
         config = rnn_config,
-        search_alg = HyperOptSearch(),
         backend = 'ray',
-        num_samples = 10,
+        num_samples = 5,
         cpus = 12
     ),
     AutoNHITS(
         h = horizon,
         loss = MQLoss(level = levels),
         config = nhits_config,
-        search_alg = HyperOptSearch(),
         backend = 'ray',
-        num_samples = 10,
+        num_samples = 5,
         cpus = 12
     )
 ]
-nf = NeuralForecast(
-    models = models_nf,
-    freq = 'D'
-)
+nf = NeuralForecast(models = models_nf, freq = '1d')
+
 
 # * Evaluation ------------------------------------------------------------
 
 # Statistical Models
-cv_res_sf = pex.calibrate_evaluate_plot(
-    object = sf, data = y_xregs_df, 
-    h = horizon, prediction_intervals = intervals, level = levels,
+cv_res_sf = calibrate_evaluate_plot(
+    sf, df = y_df, h = horizon, 
+    prediction_intervals = intervals, level = levels,
     engine = 'plotly', max_insample_length = horizon * 2  
 )
 cv_res_sf['cv_results']
@@ -218,26 +208,17 @@ cv_res_sf['plot'].show()
 # To see the results use .fit and then use .predict
 # to produce the forecasts with the optimal models
 mlf.fit(
-    df = y_xregs_df, h = horizon, n_windows = 1,
-    prediction_intervals = intervals,
+    df = y_lag_df, h = horizon, n_windows = 1, 
+    prediction_intervals = intervals, 
     num_samples = 2 # number of trials to run
 )
-mlf.results_['AutoElasticNet']
 mlf.models_
-mlf.results_['AutoLightGBM'].best_params
-mlf_preds_df = mlf.predict(h = horizon, level = levels)
+mlf.results_['AutoElasticNet'].best_params
+mlf.results_['AutoXGBoost'].best_params
+mlf_preds_df = mlf.predict(h = horizon, level = levels, X_df = forecast_lag_df)
 mlf_preds_df
 
 # Deep Learning Models
-cv_res_nf = pex.calibrate_evaluate_plot(
-    object = nf, data = y_xregs_df, 
-    h = horizon, level = levels, loss = 'MQLoss',
-    engine = 'plotly', max_insample_length = horizon * 2  
-)
-cv_res_nf['cv_results']
-cv_res_nf['accuracy_table']
-cv_res_nf['plot'].show()
-
 # To see the results use .fit and then use .predict
 # to produce the forecasts with the optimal models
 nf.fit(df = y_xregs_df, val_size = horizon)
@@ -257,6 +238,7 @@ nf_preds_df
 
 import h2o
 from h2o.automl import H2OAutoML
+
 
 # * Initialize H2O --------------------------------------------------------
 
@@ -288,26 +270,24 @@ from h2o.automl import H2OAutoML
 
 h2o.init(nthreads = -1)
 
+
 # * Format data -----------------------------------------------------------
 
-# select variables
-y_xregs_df_h2o = data_prep_df \
-    .select_columns('(_lag_)|(event)|(holiday)|(_quarter)|(_month)|(_wday)') \
-    .dropna()
-y_xregs_df_h2o
-forecast_df_h2o = forecast_df \
-    .select_columns('(_lag_)|(event)|(holiday)|(_quarter)|(_month)|(_wday)') \
-    .drop('y', axis = 1)
-forecast_df_h2o
+# select variables and convert to pandas 
+y_lag_df = data_prep_df.select(feature_sets['lag']).drop_nulls().to_pandas()
+forecast_lag_df = forecast_df.select(feature_sets['lag']).drop('y').to_pandas()
+
+# horizon
+horizon = 7 * 8
 
 # create train / test split
-train_df = y_xregs_df_h2o.head(n = -horizon)
-test_df = y_xregs_df_h2o.tail(n = horizon)
+train_df = y_lag_df.head(n = -horizon)
+test_df = y_lag_df.tail(n = horizon)
 
 # convert data.frame into h2o.frame
 train_hf = h2o.H2OFrame(train_df)
 test_hf = h2o.H2OFrame(test_df)
-forecast_hf = h2o.H2OFrame(forecast_df_h2o)
+forecast_hf = h2o.H2OFrame(forecast_lag_df)
 
 # identify predictors and response
 X = train_hf.columns
@@ -316,6 +296,7 @@ X.remove('ds')
 X.remove('y')
 X
 y = 'y'
+
 
 # * Engines ---------------------------------------------------------------
 
@@ -338,9 +319,10 @@ aml = H2OAutoML(
     sort_metric = 'RMSE',
     # include_algos = c("DRF"),
     # exclude_algos = c("DeepLearning"), # remove deeplearning for computation time
-    project_name = 'tsf_test',
+    project_name = 'mtsf_h2o',
     seed = 1
 )
+
 
 # * Evaluation ------------------------------------------------------------
 
@@ -349,14 +331,14 @@ aml.train(x = X, y = y, training_frame = train_hf, leaderboard_frame = test_hf)
 
 # view the AutoML Leaderboard
 lb = h2o.automl.get_leaderboard(aml, extra_columns = "ALL")
-lb
+lb.head(rows = 30)
 
 # extract leader model
+aml.get_best_model(criterion = 'mae')
+aml.get_best_model(algorithm = 'xgboost')
+aml.get_best_model(algorithm = 'xgboost', criterion = 'mae')
+h2o.get_model('XRT_1_AutoML_1_20241009_103759') 
 leader = aml.leader
-# aml.get_best_model(criterion = 'mae')
-# aml.get_best_model(algorithm = 'xgboost')
-# aml.get_best_model(algorithm = 'xgboost', criterion = 'mae')
-# h2o.get_model('XRT_1_AutoML_1_20241009_103759') 
 
 # predict
 preds = leader.predict(test_hf)
@@ -369,16 +351,25 @@ performance
 # plot
 preds_df = pd.concat(
     [
-        test_df.select_columns().reset_index(drop = True),
+        select_columns(test_df).reset_index(drop = True),
         preds.as_data_frame().rename(columns = {'predict': 'H2O_AutoML'})
     ], 
     axis = 1
 )
 plot_series(forecasts_df = preds_df, engine = 'plotly').show()
 
+
 # * Refitting & Forecasting -----------------------------------------------
 
-# leader.predict(forecast_hf)
+fcst = leader.predict(forecast_hf)
+fcst_df = pd.concat(
+    [
+        forecast_lag_df[['unique_id', 'ds']],
+        fcst.as_data_frame().rename(columns = {'predict': 'H2O_AutoML'})
+    ], 
+    axis = 1
+)
+plot_series(df = y_lag_df, forecasts_df = fcst_df, engine = 'plotly').show()
 
 # to refit the best model, it is necessary to extract the model parameters
 # and fit it manually with h2o specific models (not AutoML)
@@ -389,4 +380,3 @@ leader.params
 
 # Stop the H20 cluster !!!!!!!!!!!!!!!!!!!!!!!!!!1
 h2o.shutdown()
-
