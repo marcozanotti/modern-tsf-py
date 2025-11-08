@@ -114,9 +114,9 @@ output:
 ## Lecture 2.1: Deep Learning Models
 
 **Forecasting Methods**:    
-- RNN
-- CNN
-- DeepAR   
+- RNN  
+- CNN  
+- DeepAR    
 - NBEATS    
 - NHITS  
 - Transformers
@@ -126,6 +126,7 @@ output:
 
 **Forecasting Methods**:  
 - Auto-models  
+- H2O  
 
 
 ## Lecture 2.3: Hyperparameter Tuning
@@ -153,7 +154,6 @@ output:
 
 **Recursivity**:  
 - single time series recursive modelling  
-- multiple time series recursive modelling
 
 
 
