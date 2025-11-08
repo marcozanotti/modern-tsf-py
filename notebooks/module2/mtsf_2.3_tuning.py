@@ -21,7 +21,8 @@ import pickle
 import sys
 sys.path.insert(0, 'src/Python/utils')
 from utils import (
-    plot_cross_validation_plan, select_columns, print_accuracy_table, get_best_model_name
+    plot_cross_validation_plan, select_columns, 
+    print_accuracy_table, get_best_model_name
 )
 import pytimetk as tk
 import pandas as pd
