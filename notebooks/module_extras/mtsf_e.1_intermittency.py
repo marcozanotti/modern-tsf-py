@@ -22,7 +22,7 @@ import sys
 sys.path.insert(0, 'src/Python/utils')
 from utils import (
     plot_cross_validation_plan, select_columns, calibrate_evaluate_plot,
-    print_accuracy_table, back_transform_data
+    print_accuracy_table, back_transform_data, to_intermittent
 )
 import random
 import pytimetk as tk
