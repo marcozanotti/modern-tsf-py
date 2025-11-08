@@ -99,6 +99,30 @@ forecast_df.glimpse()
 
 # NESTED FORECASTING ------------------------------------------------------
 
+# Nested forecasting refers to the classical local approach to time series 
+# forecasting, where a separate model is fitted for each individual time 
+# series in a panel dataset. In this framework, the dataset typically 
+# includes an identifier (e.g., unique_id), a timestamp (ds), and a target 
+# variable (y). The forecasting process is nested because for each unique_id, 
+# the corresponding subset of the data is extracted and a model is trained 
+# specifically on that series. Forecasts are then generated independently 
+# for each model.
+
+# This approach ensures that each model is finely tuned to the unique 
+# dynamics of its own series—capturing specific trends, seasonalities, or 
+# structural breaks—but it can be computationally expensive and difficult 
+# to scale when dealing with large collections of time series. However, 
+# since each model operates independently, the process is embarrassingly 
+# parallel, meaning that model training and forecasting can be easily 
+# distributed across multiple cores, machines, or compute nodes without 
+# the need for inter-process communication.
+
+# While nested forecasting offers flexibility and interpretability at the 
+# individual series level, it does not exploit potential relationships or 
+# shared patterns across time series. These limitations have motivated the 
+# development of global forecasting models, which learn from many series 
+# simultaneously and provide a more scalable alternative for large-scale 
+# forecasting tasks.
 
 
 

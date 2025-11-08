@@ -183,62 +183,103 @@ mlf_rec.preprocess(data_model_df, static_features = [], dropna = False)
 
 # * Evaluation ------------------------------------------------------------
 
+# ** Non-Recursive --------------------------------------------------------
+
 cv_res_no_rec = calibrate_evaluate_plot(
     mlf_no_rec, df = data_model_df, h = horizon, 
     prediction_intervals = intervals, level = levels,
     max_insample_length = horizon * 3, by_id = True  
 )
+
 cv_res_no_rec['cv_results']
-print_accuracy_table(cv_res_no_rec['accuracy_table'])
+
+# Local accuracy
+cv_res_no_rec_local = cv_res_no_rec['accuracy_table']
+cv_res_no_rec_local
+
+# Gloabl accuracy
+cv_res_no_rec_global = cv_res_no_rec['accuracy_table'] \
+        .group_by('metric') \
+        .agg(pl.col(pl.NUMERIC_DTYPES).mean())
+print_accuracy_table(cv_res_no_rec_global)
+
 cv_res_no_rec['plot'].show()
+
+# ** Recursive ------------------------------------------------------------
 
 cv_res_rec = calibrate_evaluate_plot(
     mlf_rec, df = data_model_df, h = horizon, 
     prediction_intervals = intervals, level = levels,
-    max_insample_length = horizon * 3, by_id = True 
+    max_insample_length = horizon * 3, by_id = True  
 )
+
 cv_res_rec['cv_results']
-print_accuracy_table(cv_res_rec['accuracy_table'])
+
+# Local accuracy
+cv_res_rec_local = cv_res_rec['accuracy_table']
+cv_res_rec_local
+
+# Gloabl accuracy
+cv_res_rec_global = cv_res_rec['accuracy_table'] \
+        .group_by('metric') \
+        .agg(pl.col(pl.NUMERIC_DTYPES).mean())
+print_accuracy_table(cv_res_rec_global)
+
 cv_res_rec['plot'].show()
 
-print_accuracy_table(cv_res_no_rec['accuracy_table'])
-print_accuracy_table(cv_res_rec['accuracy_table'])
+# ** Combining accuracy ---------------------------------------------------
 
-cv_res_accuracy = cv_res_no_rec['accuracy_table'] \
-    .join(cv_res_rec['accuracy_table'], on = 'metric')
-cols = ['metric'] + sorted([c for c in cv_res_accuracy.columns if c != 'metric'])
-cv_res_accuracy = cv_res_accuracy.select(cols)
-print_accuracy_table(cv_res_accuracy)
+cv_res_accuracy_local = cv_res_no_rec_local \
+    .join(cv_res_rec_local, on = ['unique_id', 'metric'])
+cols = ['unique_id', 'metric'] + sorted([c for c in cv_res_accuracy_local.columns if c not in ['unique_id', 'metric']])
+cv_res_accuracy_local = cv_res_accuracy_local.select(cols)
+
+cv_res_accuracy_global = cv_res_no_rec_global \
+    .join(cv_res_rec_global, on = 'metric')
+cols = ['metric'] + sorted([c for c in cv_res_accuracy_global.columns if c != 'metric'])
+cv_res_accuracy_global = cv_res_accuracy_global.select(cols)
+print_accuracy_table(cv_res_accuracy_global)
 
 
 # * Refitting & Forecasting -----------------------------------------------
 
+# ** Non-Recursive --------------------------------------------------------
+
 fit_no_rec = mlf_no_rec.fit(df = data_model_df, prediction_intervals = intervals, static_features = [])
 preds_df_no_rec = fit_no_rec.predict(h = horizon, level = levels, X_df = forecast_df)
+
+# forecast with best model locally
+get_best_model_name(cv_res_no_rec_local, 'rmse', by_id = True)
+preds_best_df_no_rec_local = get_best_model_forecast(preds_df_no_rec, cv_res_no_rec_local, 'rmse', by_id = True)
+
+# forecast with best model globally
+get_best_model_name(cv_res_no_rec_global, 'rmse')
+preds_best_df_no_rec_global = get_best_model_forecast(preds_df_no_rec, cv_res_no_rec_global, 'rmse')
+
+# ** Recursive ------------------------------------------------------------
 
 fit_rec = mlf_rec.fit(df = data_model_df, prediction_intervals = intervals, static_features = [])
 preds_df_rec = fit_rec.predict(h = horizon, level = levels, X_df = forecast_df)
 
-preds_df = preds_df_no_rec.join(preds_df_rec, on = ['unique_id', 'ds'])
+# forecast with best model locally
+get_best_model_name(cv_res_rec_local, 'rmse', by_id = True)
+preds_best_df_rec_local = get_best_model_forecast(preds_df_rec, cv_res_rec_local, 'rmse', by_id = True)
 
-plot_series(data_model_df, preds_df, max_insample_length = horizon * 2, engine = 'plotly').show()
+# forecast with best model globally
+get_best_model_name(cv_res_rec_global, 'rmse')
+preds_best_df_rec_global = get_best_model_forecast(preds_df_rec, cv_res_rec_global, 'rmse')
 
+# ** Combining forecasts --------------------------------------------------
 
-# * Select Best Model -----------------------------------------------------
+# ** Local ----------------------------------------------------------------
 
-cv_res_accuracy = cv_res_no_rec['accuracy_table'] \
-    .join(cv_res_rec['accuracy_table'], on = 'metric')
-cols = ['metric'] + sorted([c for c in cv_res_accuracy.columns if c != 'metric'])
-cv_res_accuracy = cv_res_accuracy.select(cols)
+preds_df_local = pl.concat([preds_best_df_no_rec_local, preds_best_df_rec_local])
+preds_df_local \
+    .group_by('unique_id') \
+    .tk.plot_timeseries('ds', 'fcst', color_column = 'model', facet_ncol = 2, smooth = False)
 
-get_best_model_name(cv_res_accuracy, metric = 'mae')
-get_best_model_name(cv_res_accuracy, metric = 'rmse')
-get_best_model_name(cv_res_accuracy, metric = 'mape')
-print_accuracy_table(cv_res_accuracy)
+# ** Global ---------------------------------------------------------------
 
-preds_best_df = get_best_model_forecast(preds_df, cv_res_accuracy, 'rmse')
-preds_best_df = preds_best_df.select(preds_best_df.columns[:7])
-plot_series(
-    data_model_df, preds_best_df, level = levels,
-    max_insample_length = horizon * 2, engine = 'plotly'
-).show()
+preds_df_global = preds_best_df_no_rec_global \
+    .join(preds_best_df_rec_global, on = ['unique_id', 'ds'])
+plot_series(data_model_df, preds_df_global, max_insample_length = horizon * 2, engine = 'plotly').show()
